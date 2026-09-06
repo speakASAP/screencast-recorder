@@ -11,8 +11,12 @@ export class InitialSchema1757200000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // No CREATE EXTENSION here. `screencast_app` is a least-privilege role and
     // cannot install pgcrypto, which is correct -- the fix is to not need it.
-    // TypeORM's @PrimaryGeneratedColumn('uuid') generates the value in the
-    // application, so no database-side gen_random_uuid() default is required.
+    //
+    // Consequently the id columns carry no database-side default. The entities
+    // declare @PrimaryColumn with `randomUUID()` as a field initialiser, so the
+    // value is generated in the application before insert. Note that
+    // @PrimaryGeneratedColumn('uuid') would NOT work here: it defers to a
+    // database default and inserts NULL when none exists.
     await queryRunner.query(`
       CREATE TABLE "agents" (
         "id" uuid NOT NULL,

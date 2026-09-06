@@ -23,13 +23,14 @@ export class TokenValidator {
   async validate(token: string): Promise<ServiceClaims | null> {
     let response: Response;
     try {
+      // The token goes in the body, not an Authorization header: /auth/validate
+      // inspects a supplied token rather than authenticating the caller.
+      // Verified against the running service, which answers
+      // { valid, user: { roles: [...] } }.
       response = await fetch(`${this.authUrl}/auth/validate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({}),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
         signal: AbortSignal.timeout(5000),
       });
     } catch (error) {
@@ -43,7 +44,15 @@ export class TokenValidator {
       return null;
     }
 
-    const body = (await response.json()) as { user?: ServiceClaims } & ServiceClaims;
-    return body.user ?? body;
+    const body = (await response.json()) as { valid?: boolean; user?: ServiceClaims };
+
+    // A 200 with valid:false is a rejection, not an acceptance. Reading only
+    // response.ok here would authorise every expired or revoked token.
+    if (body.valid !== true || !body.user) {
+      this.logger.warn('Auth returned a non-valid verdict for a service token');
+      return null;
+    }
+
+    return body.user;
   }
 }

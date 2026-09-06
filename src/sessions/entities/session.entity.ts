@@ -1,4 +1,5 @@
-import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { randomUUID } from 'node:crypto';
+import { Column, CreateDateColumn, Entity, OneToMany, PrimaryColumn } from 'typeorm';
 import { Track } from './track.entity';
 
 export enum SessionState {
@@ -35,8 +36,8 @@ export function isLegalTransition(from: SessionState, to: SessionState): boolean
 
 @Entity('sessions')
 export class Session {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  @PrimaryColumn({ type: 'uuid' })
+  id: string = randomUUID();
 
   @Column({ type: 'text' })
   title!: string;

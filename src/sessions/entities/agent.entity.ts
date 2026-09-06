@@ -1,10 +1,11 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { randomUUID } from 'node:crypto';
+import { Column, CreateDateColumn, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity('agents')
 @Index(['hostname', 'machineId'], { unique: true })
 export class Agent {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  @PrimaryColumn({ type: 'uuid' })
+  id: string = randomUUID();
 
   @Column({ type: 'text' })
   hostname!: string;

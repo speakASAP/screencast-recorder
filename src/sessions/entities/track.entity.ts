@@ -1,4 +1,5 @@
-import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { randomUUID } from 'node:crypto';
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import { Session } from './session.entity';
 
 export enum TrackKind {
@@ -17,8 +18,8 @@ export enum UploadState {
 
 @Entity('tracks')
 export class Track {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  @PrimaryColumn({ type: 'uuid' })
+  id: string = randomUUID();
 
   @ManyToOne(() => Session, (session) => session.tracks, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'sessionId' })

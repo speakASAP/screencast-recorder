@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { Agent } from '../sessions/entities/agent.entity';
+import { Command } from '../sessions/entities/command.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { Track } from '../sessions/entities/track.entity';
 
@@ -18,7 +19,7 @@ export const dataSourceOptions = {
   database: process.env.DB_NAME ?? 'screencast',
   username: process.env.DB_USER ?? 'screencast_app',
   password: process.env.DB_PASSWORD ?? '',
-  entities: [Agent, Session, Track],
+  entities: [Agent, Command, Session, Track],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false,
   logging: ['error', 'warn'] as ('error' | 'warn')[],
