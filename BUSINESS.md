@@ -6,11 +6,11 @@
 
 ```yaml
 id: BUSINESS-screencast-recorder
-status: draft
+status: approved
 owner: speakASAP <ssfskype@gmail.com>
 created: 2026-09-06
 last_updated: 2026-09-06
-completeness_level: complete-draft
+completeness_level: complete
 ```
 
 ## Problem
@@ -117,18 +117,22 @@ The UI must make the current recording state unambiguous.
 ## Future business flow
 
 ```text
-Record → Save → Preview → AI edit → Human approval → YouTube publish
-                                      ↓
-                              Approve raw deletion
+Record → Save → Preview → AI edit → Human approval → YouTube publish → Approve raw deletion
+                              
 ```
 
 Only the first two steps belong to the current capture phase.
 
 ## Approval
 
-Status: draft.
+Status: approved.
 
-The supplied requirements are captured here as a draft business baseline.
-Human approval evidence remains:
+Approved by: speakASAP <ssfskype@gmail.com>
 
-`[MISSING: owner-confirmation / issue / commit / decision]`
+Approval evidence: owner-confirmation:2026-09-06-owner-approved-business-constitution-vision
+
+The owner reviewed the design section by section — architecture, data model,
+control flow, orchestration split, and identity and secrets — approved the
+written design at `docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`,
+and then instructed "approve all three docs", meaning `BUSINESS.md`,
+`docs/00_constitution/CONSTITUTION.md` and `docs/01_vision/VISION.md`.

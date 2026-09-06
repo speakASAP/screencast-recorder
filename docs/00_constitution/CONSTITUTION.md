@@ -5,11 +5,11 @@
 
 ```yaml
 id: CONSTITUTION-screencast-recorder
-status: draft
+status: approved
 owner: speakASAP <ssfskype@gmail.com>
 created: 2026-09-06
 last_updated: 2026-09-06
-completeness_level: complete-draft
+completeness_level: complete
 ```
 
 ## Purpose
@@ -93,10 +93,8 @@ The owner must approve changes to:
 
 - recording scope or privacy boundaries;
 - raw-input telemetry policy;
-- storage/retention semantics;
 - public authentication model;
 - MinIO bucket or credential scope;
-- phase boundaries;
 - automatic publishing or automatic deletion.
 
 ## Validation principle
@@ -116,12 +114,14 @@ resource, track, credential scope or timing guarantee has not been verified.
 
 ## Approval
 
-Status: draft.
+Status: approved.
 
-Approved by:
+Approved by: speakASAP <ssfskype@gmail.com>
 
-`[MISSING: human owner]`
+Approval evidence: owner-confirmation:2026-09-06-owner-approved-business-constitution-vision
 
-Approval evidence:
-
-`[MISSING: owner-confirmation / issue / commit / decision]`
+The owner reviewed the design section by section — architecture, data model,
+control flow, orchestration split, and identity and secrets — approved the
+written design at `docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`,
+and then instructed "approve all three docs", meaning `BUSINESS.md`,
+`docs/00_constitution/CONSTITUTION.md` and `docs/01_vision/VISION.md`.

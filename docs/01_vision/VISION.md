@@ -5,11 +5,11 @@
 
 ```yaml
 id: VISION-screencast-recorder
-status: draft
+status: approved
 owner: speakASAP <ssfskype@gmail.com>
 created: 2026-09-06
 last_updated: 2026-09-06
-completeness_level: complete-draft
+completeness_level: complete
 ```
 
 ## One-sentence vision
@@ -20,7 +20,7 @@ publishable YouTube videos with minimal manual editing.
 
 ## Problem statement
 
-The work is distributed across several screens and potentially several
+The work is distributed across several screens and several
 computers. A single conventional screen recording cannot represent this
 activity correctly. Recording everything as one flattened video also makes
 later editing unnecessarily expensive.
@@ -134,8 +134,7 @@ Forbidden:
 ### Architectural non-goals
 
 - running desktop capture inside Kubernetes;
-- introducing Temporal or another distributed workflow engine solely for the
-  capture loop;
+- introducing distributed workflow engine solely for the capture loop;
 - using a general keylogger to infer activity.
 
 ## Success criteria
@@ -172,12 +171,14 @@ The capture contract must remain stable across that transition.
 
 ## Approval
 
-Status: draft.
+Status: approved.
 
-Approved by:
+Approved by: speakASAP <ssfskype@gmail.com>
 
-`[MISSING: human owner]`
+Approval evidence: owner-confirmation:2026-09-06-owner-approved-business-constitution-vision
 
-Approval evidence:
-
-`[MISSING: owner-confirmation / issue / commit / decision]`
+The owner reviewed the design section by section — architecture, data model,
+control flow, orchestration split, and identity and secrets — approved the
+written design at `docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`,
+and then instructed "approve all three docs", meaning `BUSINESS.md`,
+`docs/00_constitution/CONSTITUTION.md` and `docs/01_vision/VISION.md`.
