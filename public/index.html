@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Screencast Recorder</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Screencast Recorder</h1>
+      <nav>
+        <button type="button" data-screen="new" class="active">New session</button>
+        <button type="button" data-screen="recording" hidden>Recording</button>
+        <button type="button" data-screen="review" hidden>Review</button>
+        <button type="button" data-screen="sessions">Sessions</button>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Screen 1: choose what to record -->
+      <section id="screen-new">
+        <h2>New session</h2>
+
+        <label class="field">
+          <span>Title</span>
+          <input id="session-title" type="text" placeholder="What are you working on?" />
+        </label>
+
+        <label class="field">
+          <span>Quality</span>
+          <select id="preset">
+            <option value="15">15 fps — code and terminals (recommended)</option>
+            <option value="24">24 fps — some motion</option>
+            <option value="30">30 fps — video playback on screen</option>
+          </select>
+        </label>
+
+        <div id="agents"><p class="muted">Loading agents…</p></div>
+
+        <p id="estimate" class="muted"></p>
+
+        <button id="start" type="button" class="primary" disabled>Start recording</button>
+        <p id="new-error" class="error" hidden></p>
+      </section>
+
+      <!-- Screen 2: live state while recording -->
+      <section id="screen-recording" hidden>
+        <h2>Recording</h2>
+        <p class="big" id="elapsed">00:00:00</p>
+        <p>State: <strong id="rec-state">—</strong></p>
+        <table id="track-table">
+          <thead>
+            <tr><th>Track</th><th>Source</th><th>Segments</th><th>Size</th><th>Status</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p>Free disk: <strong id="free-disk">—</strong></p>
+        <p>Active window: <strong id="active-window">—</strong></p>
+        <button id="stop" type="button" class="danger">Stop</button>
+      </section>
+
+      <!-- Screen 3: the save/discard gate. Nothing is uploaded before this. -->
+      <section id="screen-review" hidden>
+        <h2>Review</h2>
+        <p>Recording finished. Nothing has been uploaded yet.</p>
+        <dl>
+          <dt>Title</dt><dd id="rev-title">—</dd>
+          <dt>Duration</dt><dd id="rev-duration">—</dd>
+          <dt>Tracks</dt><dd id="rev-tracks">—</dd>
+          <dt>Total size</dt><dd id="rev-size">—</dd>
+        </dl>
+        <button id="save" type="button" class="primary">Save to S3</button>
+        <button id="discard" type="button" class="danger">Discard</button>
+        <p id="review-note" class="muted">
+          Saving uploads every segment and then verifies each object exists in
+          storage. Local files are kept until you have previewed the stored
+          session.
+        </p>
+      </section>
+
+      <!-- Screen 4: what has been stored -->
+      <section id="screen-sessions" hidden>
+        <h2>Sessions</h2>
+        <table id="session-table">
+          <thead>
+            <tr><th>Title</th><th>State</th><th>Started</th><th>Prefix</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
