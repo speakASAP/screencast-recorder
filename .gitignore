@@ -19,3 +19,5 @@ __pycache__/
 
 # Node
 package-lock.json.bak
+agent/dist/
+agent/node_modules/
