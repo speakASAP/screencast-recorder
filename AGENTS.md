@@ -13,47 +13,50 @@ Read in this order before planning or implementation:
 7. `docs/00_constitution/CONSTITUTION.md`
 8. `docs/01_vision/VISION.md`
 9. `docs/06_architecture/INTEGRATION_CONTRACT.md`
-10. The active task, goal-impact record, execution plan and validation plan
+10. active task, goal-impact record, execution plan and validation plan.
 
 ## Authority
 
-- Git files in this repository are authoritative for project intent and behavior.
-- Ecosystem authority is defined in
-  `/home/ssf/Documents/Github/shared/docs/DOCUMENTATION_AUTHORITY.md`.
-- Cross-agent rules are defined in
-  `/home/ssf/.ai-agent-standards/CROSS_AGENT_AUTOMATION_STANDARD.md`.
-- docs-RAG is a derived discovery index; verify critical facts against Git.
-- While onboarding is incomplete, use the canonical workflow at
-  `/home/ssf/Documents/Github/shared/.agents/skills/register-new-app/SKILL.md`
-  and do not bypass its planning or ecosystem-registration gates.
+Git files in this repository are authoritative for project intent and behavior.
+Ecosystem authority is defined in the shared documentation authority. The
+`register-new-app` onboarding skill is a required gate for new application
+onboarding. Do not bypass it.
 
-## Intent Preservation System
+## Intent Preservation
 
-Preserve this chain:
+Preserve:
 
 ```text
-Vision -> Goal Impact -> System -> Feature -> Task -> Execution Plan -> Coding Prompt -> Code -> Validation
+Vision → Goal Impact → System → Feature → Task → Execution Plan → Code → Validation
 ```
 
-Do not implement while required intent, scope, integration, invariant or
-validation information is missing. Record unavailable facts as `[MISSING: ...]`
-or `[UNKNOWN: ...]`; never invent them.
+Do not implement while required intent, integration, invariant or validation
+information is unresolved.
 
-## Safety and operations
+## Project rules
 
-- Work in the authoritative server checkout.
-- Do not print or commit secrets, tokens or raw production data.
-- Use Vault and External Secrets for runtime secrets.
-- Follow `AGENT_OPERATIONS.md` for parallel work, validation debt and handoff.
-- Use the shared deployment runner and ecosystem deploy lock.
-- Do not modify protected constitution, vision or approved business intent
-  without a human-approved amendment.
+1. Phase 1 is Ubuntu-only.
+2. Desktop capture runs in a host-bound user agent, not in Kubernetes.
+3. The API/UI is the control plane, not the video data path.
+4. Displays, cameras, microphones and encoders are discovered at runtime.
+5. Each display/webcam/audio source remains an independent track.
+6. Start uses NTP/chrony readiness plus a future common `T0`.
+7. Do not implement a traditional keylogger. Persist activity metadata only;
+   never raw key characters or clipboard contents.
+8. Local media is authoritative until MinIO upload and verification succeed.
+9. Runtime MinIO access is least-privilege and bucket-scoped.
+10. AI, YouTube and raw-footage deletion remain phase-2 concerns.
+11. Do not introduce runlayer/BPCP/Temporal into the live capture loop merely to
+    orchestrate a local recording process.
+12. Never print or commit secrets or raw production media.
 
-## Project-specific rules
+## Deployment
 
-[MISSING: add rules derived from approved screencast-recorder intent and system constraints]
+Use the shared deployment runner and ecosystem deploy lock. The host agent is
+installed separately as a systemd user service and is not a Kubernetes
+workload.
 
 ## Required final report
 
-Report files changed, documents created, validation evidence, validation debt,
-blockers, deviations and the next concrete action.
+Report files changed, validation evidence, validation debt, blockers, deviations
+and the next concrete action.

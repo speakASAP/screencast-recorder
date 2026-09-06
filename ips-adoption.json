@@ -32,162 +32,162 @@
     {
       "capability": "auth",
       "component": "auth-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "required",
+      "reason": "Operator UI authentication and agent identity",
+      "contract": "Auth HTTP API and sanctioned service-token standard",
+      "configuration": "AUTH_SERVICE_URL + identities in Vault",
+      "failureMode": "Auth outage blocks new control actions; active agent continues local capture",
+      "validation": "Authenticated UI and agent heartbeat"
     },
     {
       "capability": "postgres",
       "component": "db-server-postgres",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "required",
+      "reason": "Persistent session, agent and track state",
+      "contract": "PostgreSQL via dedicated database/least-privilege role",
+      "configuration": "SCREENCAST_DATABASE_URL from Vault",
+      "failureMode": "API state unavailable; local agent continues recording",
+      "validation": "DB connectivity, migrations and CRUD smoke test"
     },
     {
       "capability": "redis",
       "component": "db-server-redis",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "Phase 1 has no distributed queue, lease or dedup requirement",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "logging",
       "component": "logging-microservice",
       "decision": "required",
-      "reason": "Runtime services emit structured logs",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "reason": "Operational events must use ecosystem logging",
+      "contract": "Structured log/event API",
+      "configuration": "LOGGING_SERVICE_URL from Vault/config",
+      "failureMode": "Logging outage must not stop local recording",
+      "validation": "Known session event visible in logging"
     },
     {
       "capability": "notifications",
       "component": "notifications-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "Single operator monitors the recording UI",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "ai",
       "component": "ai-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "AI editing is phase 2; phase 1 produces its input manifest",
+      "contract": "Phase-2 manifest/session.stored contract only",
+      "configuration": "Future ai-microservice configuration",
+      "failureMode": "N/A in phase 1",
+      "validation": "Phase-2 contract test"
     },
     {
       "capability": "payments",
       "component": "payments-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "No payment relationship",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "catalog",
       "component": "catalog-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "No catalog relationship",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "orders",
       "component": "orders-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "No order relationship",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "warehouse",
       "component": "warehouse-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "No warehouse relationship",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "invoices",
       "component": "invoices-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "No invoice relationship",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     },
     {
       "capability": "object-storage",
       "component": "minio-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "required",
+      "reason": "Durable storage for accepted sessions",
+      "contract": "S3-compatible Put/Head/Get/Delete under dedicated bucket",
+      "configuration": "MINIO_* from Vault",
+      "failureMode": "Upload failure retains local source",
+      "validation": "Object upload and read-back verification"
     },
     {
       "capability": "event-bus",
       "component": "RabbitMQ",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "required",
+      "reason": "Lifecycle handoff to future post-production",
+      "contract": "session.stored event",
+      "configuration": "RabbitMQ config/identity from Vault",
+      "failureMode": "Publish failure retried/outboxed; stored media remains valid",
+      "validation": "Event observed by test consumer"
     },
     {
       "capability": "docs-rag",
       "component": "docs-rag-microservice",
       "decision": "required",
-      "reason": "Project documentation must be discoverable",
-      "contract": "Direct Git repository ingestion",
-      "configuration": "shared/config/ecosystem-repositories.json",
-      "failureMode": "Git remains authoritative when retrieval is unavailable or unconfident",
-      "validation": "Distinctive project phrase resolves to the owning repository path"
+      "reason": "Project docs must be discoverable",
+      "contract": "Repository ingestion/index",
+      "configuration": "shared ecosystem catalog",
+      "failureMode": "Retrieval unavailable; Git remains authoritative",
+      "validation": "Distinctive project phrase resolves"
     },
     {
       "capability": "monitoring",
       "component": "monitoring-microservice",
       "decision": "required",
-      "reason": "Runtime health must be observable",
-      "contract": "GET /health plus Kubernetes probes",
-      "configuration": "Deployment probes and service metadata",
-      "failureMode": "Readiness prevents unhealthy rollout",
-      "validation": "Health and readiness checks pass"
+      "reason": "Recording/control health must be observable",
+      "contract": "GET /health plus metrics/probes",
+      "configuration": "Kubernetes deployment/service config",
+      "failureMode": "Unhealthy rollout blocked; capture independent",
+      "validation": "Health/readiness/agent liveness checks"
     },
     {
       "capability": "backups",
       "component": "backups-microservice",
-      "decision": "REQUIRED_OR_NOT_APPLICABLE",
-      "reason": "REPLACE_ME",
-      "contract": "REPLACE_ME",
-      "configuration": "REPLACE_ME",
-      "failureMode": "REPLACE_ME",
-      "validation": "REPLACE_ME"
+      "decision": "not-applicable",
+      "reason": "Raw media has explicit retention semantics and is not backed up in phase 1",
+      "contract": "None",
+      "configuration": "None",
+      "failureMode": "N/A",
+      "validation": "Adoption gate records N/A"
     }
   ]
 }
