@@ -11,34 +11,47 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 - [ ] `TASK-001-bootstrap-service` - complete documentation-first onboarding,
   integration decisions, implementation and validation.
-- [ ] Register the Auth application `screencast-recorder` with the
-  application-scoped default role `app:screencast-recorder:user`.
-- [ ] Mint the service principal
-  `svc-screencast-agent--screencast-recorder@internal.alfares.cz` with role
-  `internal:screencast-recorder:agent`, using
-  `auth-microservice/scripts/provision-service-token.js` only.
-- [ ] Declare every Vault key in `k8s/external-secret.yaml` and verify by
-  enumerating the resulting Kubernetes Secret, not by reading `Ready=True`.
-- [ ] Create the Vault AppRole `screencast-agent` for the host-side agent.
+- [ ] Host agent, per
+  [`plans/2026-09-06-screencast-recorder-agent.md`](docs/superpowers/plans/2026-09-06-screencast-recorder-agent.md):
+  capability discovery, Vault AppRole loading, the chrony barrier, VAAPI
+  capture with segmentation, the activity tracker, the manifest writer, the
+  resumable uploader, the command loop, and the systemd user unit.
 
 ## Ready next
 
-- [ ] Pass the IPS planning gate
-  (`validate_adoption_profile.py --root . --phase planning`).
-- [ ] Register the ecosystem identity: GitHub remote, `ECOSYSTEM_MAP.md` row,
-  and catalog entry with `ipsAdoptionRequired: true`.
-- [ ] Write the API implementation plan, including the operator web UI.
-- [ ] Write the host-agent implementation plan.
+- [ ] Deploy the API (plan task 9). Requires removing the temporary
+  `screencast-recorder` entry from `shared/scripts/deploy-queue/registry.sh`,
+  which exists only while the repo has no application code. Deliberately
+  deferred: the API has nothing to talk to until the agent exists, so
+  deploying now would place an idle service in the cluster.
+- [ ] End-to-end validation once both halves exist, including killing the API
+  mid-recording to prove capture survives a controller outage.
+- [ ] Complete `docs/12_validation/VAL-TASK-001-bootstrap-service.md` with the
+  recorded evidence, which is what closes TASK-001.
 
 ## Blocked
 
-- [ ] `BUSINESS.md`, `docs/00_constitution/CONSTITUTION.md` and
-  `docs/01_vision/VISION.md` require `status: approved` plus durable human
-  approval evidence. The deploy preflight gate fails until the owner signs
-  these off; an agent must not self-certify them.
+- None. The owner approved `BUSINESS.md`,
+  `docs/00_constitution/CONSTITUTION.md` and `docs/01_vision/VISION.md` on
+  2026-09-06; the IPS planning gate and the pre-coding gate both pass.
 
 ## Completed
 
+- [x] API service, plan tasks 1-8: bootable skeleton on 3391; entities and
+  migrations; the agent guard; the registry; the session lifecycle with an
+  all-agents-ready start barrier; MinIO readback verification; manifest
+  ingestion; and the operator web UI. 43 tests across 8 suites.
+- [x] Verified against live systems rather than mocks: no-token 401, bogus
+  token 403 and the real pair token accepted through auth-microservice;
+  enrolment idempotent on re-enrolment; the scoped MinIO credential denied on
+  `speakasap-records` with AccessDenied; the console rendering this host's real
+  HDMI-A-0 and Jabra with the webcam shown unavailable; and the built container
+  serving all of it.
+- [x] Three defects found by that verification and fixed: /auth/validate takes
+  the token in the body and a 200 with valid:false is a rejection;
+  @PrimaryGeneratedColumn('uuid') inserts NULL without a database default; and
+  s3Prefix must be fixed at Save, or a session spanning midnight is verified
+  against a prefix nothing was uploaded to.
 - [x] Repository harness scaffolded: port 3391, domain
   `screencast.alfares.cz`, namespace `statex-apps`.
 - [x] PostgreSQL database `screencast` created. Role `screencast_app` is

@@ -2,7 +2,7 @@
   "service": {
     "name": "screencast-recorder",
     "kind": "service",
-    "lifecycle": "onboarding",
+    "lifecycle": "implementation",
     "deployment": "kubernetes"
   },
   "schema_version": "1.0",
@@ -13,7 +13,7 @@
     "next_ready_goal_ids": [],
     "blocked_goal_ids": [],
     "active_workstream_ids": [],
-    "last_updated_at": "2026-09-06T00:00:00Z"
+    "last_updated_at": "2026-09-06T21:15:00Z"
   },
   "delivery": {
     "last_validation_id": null,
