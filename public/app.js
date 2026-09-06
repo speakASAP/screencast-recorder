@@ -146,12 +146,15 @@ function updateStartButton() {
   const chosen = selectedSources();
   $('start').disabled = chosen.length === 0;
 
-  // A rough figure, but the useful one: it answers "will this fill the disk?".
+  // Measured on a 4K VAAPI capture of near-static screen content: ~1.4 GB/hour
+  // per screen at 15 fps. Motion raises it sharply, so this is a floor rather
+  // than a promise, and it is labelled as such.
   const screens = chosen.filter((s) => s.kind === 'screen').length;
   const fps = Number($('preset').value);
-  const gbPerHour = screens * (fps / 15) * 10;
+  const gbPerHour = screens * (fps / 15) * 1.4;
   $('estimate').textContent = screens
-    ? `Rough estimate: ${gbPerHour.toFixed(0)} GB per hour for ${screens} screen track(s) at ${fps} fps.`
+    ? `About ${gbPerHour.toFixed(1)} GB per hour for ${screens} screen track(s) at ${fps} fps, ` +
+      'for mostly static content. Video playback on screen can multiply this.'
     : '';
 }
 

@@ -22,8 +22,11 @@ data:
   # 60-second segments cap crash loss at one segment and let a later editing
   # stage drop whole intervals with -c copy, without re-encoding.
   SCREEN_SEGMENT_SECONDS: "60"
-  # 4K/15fps VAAPI runs about 8-12 GB/hour, so a four-hour session needs ~50 GB.
-  RECORDING_MIN_FREE_GB: "50"
+  # Measured on alfares: 4K/15fps VAAPI at QP 24 produces ~1.4 GB/hour on
+  # near-static screen content, so a four-hour session is ~6 GB. The floor is
+  # set well above that because the figure rises sharply with motion -- video
+  # playback or fast scrolling can multiply it several times over.
+  RECORDING_MIN_FREE_GB: "20"
   # How far ahead T0 is placed once every agent is ready: long enough for the
   # long poll to deliver the start command, short enough not to feel laggy.
   START_BARRIER_LEAD_SECONDS: "5"
