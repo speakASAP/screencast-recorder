@@ -593,3 +593,65 @@ Do not push `shared` without the owner's go-ahead; it is a widely consumed repos
 - All nine Vault keys are present, each has an explicit ExternalSecret entry, and the Kubernetes Secret is verified to contain all nine by enumeration.
 - The AppRole reads only `secret/prod/screencast-recorder` and is verified denied elsewhere.
 - The planning gate passes and the catalog validator accepts the entry.
+
+---
+
+## Execution record (2026-09-06)
+
+What the plan predicted, and what the live systems actually required.
+
+### Deviations from the plan
+
+| Planned | Actual | Why |
+|---|---|---|
+| Database `screencast_recorder`, role `screencast_recorder_app` | Database `screencast`, role `screencast_app` | The 45 live databases use short names (`cv`, `ai`, `bpcp`, `runlayer`). Matching the convention beat matching the plan. |
+| `mkrole.sh` not mentioned | Used `shared/scripts/db-roles/mkrole.sh` | It is the established convention: creates the role, transfers ownership across every non-system schema, stages the password in Vault without printing it, and reports unowned objects. Writing new SQL would have duplicated it worse. |
+| Vault path written once in Task 5 | Created in Task 2, patched thereafter | `mkrole.sh` writes `DB_PASSWORD_NEW` into an existing path, so the path had to exist first. `kv put` replaces a whole document; every later write used `kv patch`. |
+| `openssl` inside the MinIO pod | Generated on the host, passed via `env` | The pod has no `openssl`. The first attempt created a user with an empty password and still printed its success line, because the `echo` was not gated on the command's exit status. |
+| Auth application via `register-application.sh` | Wrote `seed-screencast-recorder-roles.js` | Public registration is closed (correct hardening), and the authenticated path needs an admin JWT. The ecosystem's actual pattern is a per-service seed script run inside the auth pod; this one follows `seed-docs-rag-roles.js`. |
+| One service principal | Application + two roles, then the principal | `provision-service-token.js` refuses to mint until the target application and role exist: *"Application not found ... Run seed first."* Then it refuses again until the principal exists: *"Re-run with `--create-if-missing` after owner approval."* Both gates are correct. |
+| Nine Vault keys | Thirteen | The DSN was split into `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` to match `mkrole.sh`'s output and the ecosystem's `DB_*` convention. |
+
+### Findings worth keeping
+
+- **The scaffolder emits a `STATE.json` its own pre-commit hook rejects.**
+  `scaffold-new-service.py` writes the legacy narrative keys (`activeTask`,
+  `blockers`, `deployment`, `health`, ...) while the hook enforces the
+  wave-projection contract. Every newly scaffolded repository fails its first
+  commit until the file is rewritten. This is a bug in `shared`.
+
+- **A commit to a code-less repository wedges the shared deploy worker.** The
+  IPS preflight correctly refuses to deploy a repo full of placeholders, but
+  the failure fires an alert and leaves `statex-deploy-queue.service` in
+  `FAILED`, which blocks the queue for every other service until someone runs
+  `systemctl --user reset-failed statex-deploy-queue.service`. Resolved by
+  adding a temporary, commented deny-list entry; remove it once phase-1 code
+  exists.
+
+- **Thirteen databases still grant `PUBLIC` CONNECT.** `auth`, `backups`,
+  `bpcp`, `cv`, `growth_core`, `marathon`, `minio`, `monitoring`, `orders`,
+  `payment`, `postgres`, `scratch_alert_mig`, `warehouse_db`. Any login role
+  can connect to them; table grants still apply, so the exposure is catalog
+  metadata and a connection slot rather than row data. The 33 restricted
+  databases are the ones that went through `mkrole.sh`. Out of scope here.
+
+- **`Ready=True` on an ExternalSecret proves nothing about key coverage.**
+  Verification enumerated all thirteen keys of the generated Secret.
+
+### Verification evidence
+
+| Claim | Evidence |
+|---|---|
+| DB role is scoped | `rolsuper/rolcreaterole/rolcreatedb` all false; owns every object; `CONNECT` revoked from `PUBLIC` on `screencast` |
+| Storage credential is scoped | Reads and writes `screencast-sessions`; denied on `speakasap-records`, `backups`, `cv-uploads`, `catalog-media`, `wisdom-quotes`, `school-committee`, and `mc admin` |
+| Token is genuine RS256 | Header decoded: `alg=RS256`, `kid=a975635403084850`, `type=service`, exactly one role `internal:screencast-recorder:agent` |
+| Secret reaches the pod | All thirteen keys enumerated from the live Secret, none missing, none extra |
+| AppRole is least privilege | Wrapped `secret_id` → unwrap → login → read own path; denied on `secret/prod/cv-tuning` and `secret/prod/minio-microservice`; denied write to its own path |
+
+### Still open
+
+- Task 7 (planning gate) fails only on owner approval of `BUSINESS.md`,
+  `CONSTITUTION.md` and `VISION.md`. Everything an agent may legitimately
+  complete is complete.
+- Task 8 (GitHub remote, ecosystem map, catalog registration) is not started;
+  it awaits the owner's go-ahead to create the public repository.
