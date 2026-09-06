@@ -85,3 +85,89 @@ the live capture agent.
 
 No integration is permitted to receive raw keyboard characters, clipboard
 contents or secret values merely to improve editing.
+
+## Data ownership
+
+| Entity / event | Owner | Notes |
+|---|---|---|
+| `agents`, `sessions`, `tracks` | screencast-recorder | Sole writer; no other service mutates capture state. |
+| Local session media, pre-Save | the recording agent | Authoritative while a session is live, including during an API outage. |
+| Objects under `sessions/…` in `screencast-sessions` | screencast-recorder | Written through the scoped service account; MinIO owns durability, not semantics. |
+| `session.stored` | screencast-recorder | Published; consumed later by post-production. |
+| Operator identity | `auth-microservice` | Never mirrored into this service's database. |
+| Rendered videos, publication state | phase 2 | Not owned here. |
+
+## Authentication and authorization
+
+Two separate lanes, never conflated.
+
+**Human.** The operator authenticates through hosted Auth against the
+registered user-facing application `screencast-recorder`, whose
+application-scoped default role is `app:screencast-recorder:user`. Credentials
+are entered only at `auth.alfares.cz`.
+
+**Machine.** The agent calls the API with the pair-specific Auth-signed RS256
+token for `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+carrying `internal:screencast-recorder:agent` and never `global:superadmin`. It
+is minted only by `auth-microservice/scripts/provision-service-token.js`. The
+API declares allowed service roles on every machine-accessible route,
+classifying by effect rather than HTTP verb, and denies and error-logs any
+undecorated route. Rotation happens before 90 days, and the acceptance proof is
+a successful authenticated call — never `exp`, Secret synchronisation or a pod
+restart.
+
+The pod receives its credentials through Vault → ExternalSecret → Secret →
+`secretKeyRef`. The host agent, having no pod, reads the same Vault path
+through AppRole, the established path for non-pod consumers in this ecosystem.
+
+Storage authorisation is a policy boundary, not a code convention: the runtime
+MinIO service account can address `screencast-sessions` and nothing else.
+
+## Synchronous dependencies
+
+| Dependency | Purpose | Timeout / behavior on failure |
+|---|---|---|
+| `auth-microservice` | Validate operator sessions and agent service tokens | UI and API return a controlled auth failure; an in-flight recording is unaffected because the agent does not re-authenticate mid-capture |
+| `db-server-postgres` | Session, agent and track state | API becomes unavailable; the agent keeps recording locally and reconciles on reconnect |
+| `minio-microservice` (S3) | Upload and verification during Save | Save is retried; segments upload independently and a resumed upload skips completed objects; local media is retained |
+| `logging-microservice` | Structured operational events | Falls back to local logging; never interrupts a recording |
+
+## Asynchronous dependencies
+
+Published: `session.stored`, once every object of a saved session is verified
+present in S3. It carries the session id, the S3 prefix, the track inventory
+and the timing manifest reference — enough for a phase-2 consumer to start work
+without reading this service's database.
+
+Consumed: none in phase 1.
+
+Delivery is at-least-once, so consumers must be idempotent on session id. A
+message carries no caller authority: a handler that needs a privileged action
+makes its own authorised HTTP call under the service identity standard.
+
+## Degraded operation
+
+| Unavailable dependency | Behavior |
+|---|---|
+| API / controller | The agent continues recording. Local files are the source of truth; state reconciles on reconnect. This is why the agent long-polls rather than the API pushing. |
+| PostgreSQL | The API is down, which reduces to the row above. |
+| MinIO | Save fails and is retried. Nothing local is deleted. |
+| Auth | New sessions cannot start; running captures continue. |
+| Logging | Local logging only. |
+| Event bus | `session.stored` is queued for retry; the session is still marked stored, because storage is verified by S3 readback, not by event delivery. |
+| Vault sealed | The pod's ExternalSecret fails and the API does not start; the agent reports "controller unavailable" instead of recording into a void. |
+
+## Validation
+
+- Scoped storage credential: verified able to read and write
+  `screencast-sessions`, and denied on `speakasap-records`, on every other
+  bucket, and on all admin operations.
+- Database role: verified non-superuser, owning every object in `screencast`,
+  with `CONNECT` revoked from `PUBLIC`.
+- Secret delivery: verified by enumerating the keys of the generated Kubernetes
+  Secret, never by reading `Ready=True` alone.
+- Service identity: verified by a successful authenticated agent call against a
+  role-decorated route, plus a denied call from an undecorated one.
+- Capture: verified by a real recording that demonstrates source discovery,
+  synchronised start, independent tracks, activity metadata, graceful stop,
+  Save and Discard, and verified MinIO storage.

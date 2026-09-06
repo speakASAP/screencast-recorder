@@ -23,7 +23,7 @@ slow and loses the timing information needed to identify useful moments.
 The project therefore needs to turn a live work session into a synchronized,
 structured set of source recordings that can later be edited automatically.
 
-## Target user
+## Target users and stakeholders
 
 Primary user: the operator/owner who records their own development work.
 
@@ -62,7 +62,7 @@ the amount of footage recorded.
 8. Design the protocol so a MacBook can be added later without redesigning the
    session model.
 
-## Non-goals for the current phase
+## Non-goals
 
 - MacBook implementation;
 - AI editing and automatic highlight selection;

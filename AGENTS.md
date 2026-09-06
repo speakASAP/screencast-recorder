@@ -22,7 +22,7 @@ Ecosystem authority is defined in the shared documentation authority. The
 `register-new-app` onboarding skill is a required gate for new application
 onboarding. Do not bypass it.
 
-## Intent Preservation
+## Intent preservation system
 
 Preserve:
 
@@ -33,7 +33,7 @@ Vision → Goal Impact → System → Feature → Task → Execution Plan → Co
 Do not implement while required intent, integration, invariant or validation
 information is unresolved.
 
-## Project rules
+## Project-specific rules
 
 1. Phase 1 is Ubuntu-only.
 2. Desktop capture runs in a host-bound user agent, not in Kubernetes.
@@ -60,3 +60,29 @@ workload.
 
 Report files changed, validation evidence, validation debt, blockers, deviations
 and the next concrete action.
+
+## Safety and operations
+
+- This machine **is** `alfares`. Never `ssh alfares` or `ssh speakasap` from an
+  agent session; run `vault`, `kubectl` and `rtk` locally.
+- Vault is plain HTTP here: `export VAULT_ADDR=http://127.0.0.1:8200`.
+- On the host, `mc` is GNU Midnight Commander, not the MinIO client. The real
+  client exists only at `/usr/bin/mc` inside the MinIO pod. Never pipe storage
+  operations through host `mc`.
+- Never touch `/srv/speakasap-records/speakasap-records/`; it holds roughly
+  618 GB of live lesson audio belonging to another service. Never
+  `mount --bind` anything over `/srv/speakasap-records`.
+- Runtime storage access uses the scoped, non-root MinIO service account.
+  MinIO root credentials are used only for one-time provisioning.
+- Never print, log, commit or paste a secret value. Key names only.
+- Recording sessions can be hours long and are not reproducible. Never delete
+  local session media that has not been both uploaded, verified in S3, and
+  previewed by the operator.
+- Auto-deploy is disabled for this repository while it has no application code
+  (see `shared/scripts/deploy-queue/registry.sh`). A commit that fails deploy
+  preflight leaves the shared worker unit FAILED and blocks the queue for every
+  other service; recover with
+  `systemctl --user reset-failed statex-deploy-queue.service`.
+- Service-to-service authentication follows
+  `auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md` without
+  exception. If an integration cannot meet it, repair the integration.

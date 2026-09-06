@@ -2,11 +2,11 @@
 
 ```yaml
 id: PROJECT-INVARIANTS
-status: draft
+status: reviewed
 owner: speakASAP <ssfskype@gmail.com>
 created: 2026-09-06
 last_updated: 2026-09-06
-completeness_level: complete-draft
+completeness_level: complete
 ```
 
 ## Purpose
@@ -38,3 +38,11 @@ None approved.
 Review invariants when recording scope, privacy policy, storage semantics,
 multi-machine synchronization or phase boundaries change, and before phase-2
 post-production integration.
+
+## Applicability
+
+These invariants apply to every component in this repository — the Kubernetes
+API service, the host-bound recording agent, and the provisioning scripts — and
+to every agent or person changing them. They hold for phase 1 and continue to
+hold for phase-2 post-production work unless the owner approves an explicit,
+documented change to this file.

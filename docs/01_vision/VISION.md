@@ -169,3 +169,15 @@ Human approval for raw retention deletion
 ```
 
 The capture contract must remain stable across that transition.
+
+## Approval
+
+Status: draft.
+
+Approved by:
+
+`[MISSING: human owner]`
+
+Approval evidence:
+
+`[MISSING: owner-confirmation / issue / commit / decision]`

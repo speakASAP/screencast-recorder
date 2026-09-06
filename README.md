@@ -7,6 +7,56 @@ microphone audio, plus privacy-safe activity metadata. A later post-production
 pipeline can use that material to reduce a multi-hour work session to a short
 video without asking the operator to manually find every useful interval.
 
+## Status
+
+- Lifecycle: onboarding
+- Production status: not deployed
+- Owner: speakASAP <ssfskype@gmail.com>
+
+Auto-deploy is intentionally disabled for this repository while it contains no
+application code; see the entry in
+`shared/scripts/deploy-queue/registry.sh`.
+
+## Documentation authority
+
+- Business intent: [`BUSINESS.md`](BUSINESS.md)
+- System contract: [`SYSTEM.md`](SYSTEM.md)
+- Agent instructions: [`AGENTS.md`](AGENTS.md)
+- Current work: [`TASKS.md`](TASKS.md)
+- Machine-readable state: [`STATE.json`](STATE.json)
+- IPS adoption: [`ips-adoption.json`](ips-adoption.json)
+- Integration decisions:
+  [`docs/06_architecture/INTEGRATION_CONTRACT.md`](docs/06_architecture/INTEGRATION_CONTRACT.md)
+- Approved design:
+  [`docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`](docs/superpowers/specs/2026-09-06-screencast-recorder-design.md)
+
+Git is authoritative. docs-RAG is a derived discovery index.
+
+## Capabilities
+
+- Discover recording sources on each registered agent: displays, audio inputs,
+  cameras and hardware encoders.
+- Record each selected source as an independent, segmented media track.
+- Capture privacy-safe activity metadata that never includes keystroke content.
+- Start every participating agent against one shared future `T0` after a
+  clock-synchronisation barrier.
+- Control the whole session lifecycle from a web page, ending in an explicit
+  Save or Discard.
+- Store accepted sessions in the dedicated `screencast-sessions` MinIO bucket
+  with verification before any local cleanup.
+- Emit a `session.stored` lifecycle event for later post-production.
+
+## Interfaces
+
+- Operator web UI at `https://screencast.alfares.cz` (Auth-protected).
+- HTTP API on port `3391` for session and agent control.
+- Agent long-poll command channel, authenticated with the pair-specific
+  RS256 service token.
+- `GET /health` for probes and monitoring.
+- Published event `session.stored` on the ecosystem event bus.
+- S3 objects under `sessions/<YYYY>/<MM>/<DD>/<session-id>/` in
+  `screencast-sessions`.
+
 ## Current scope
 
 **Phase 1 is capture-first and Ubuntu-only.** The immediate test target is one
@@ -248,6 +298,47 @@ Vision → Goal Impact → System → Feature → Task → Plan → Code → Val
 
 Do not implement application code while required integration contracts,
 invariants or validation criteria are unresolved.
+
+Supported commands (the API package, once implemented):
+
+```bash
+npm install
+npm run typecheck
+npm run test
+npm run build
+npm run start:dev
+```
+
+## Configuration
+
+Non-secret configuration lives in [`.env.example`](.env.example): `PORT`,
+`DOMAIN`, `MINIO_BUCKET`, `SCREEN_SEGMENT_SECONDS`, `SCREEN_DEFAULT_FPS`,
+`RECORDING_MIN_FREE_GB`, `START_BARRIER_LEAD_SECONDS` and
+`ACTIVITY_SAMPLE_HZ`.
+
+Secret configuration is delivered only through Vault at
+`secret/prod/screencast-recorder`, declared key by key in
+[`k8s/external-secret.yaml`](k8s/external-secret.yaml) and consumed by the pod
+through `secretKeyRef`. A key that is present in Vault but missing from the
+ExternalSecret never reaches the pod, while ESO still reports `Synced` — so
+verify by enumerating the resulting Kubernetes Secret, never by reading
+`Ready=True`.
+
+The host agent reads the same Vault path through AppRole, because it runs
+outside Kubernetes and has no Secret to mount.
+
+Never commit a secret value, and never print one to a terminal or log.
+
+## Health and observability
+
+- `GET /health` backs the Kubernetes liveness and readiness probes; readiness
+  failure blocks a rollout.
+- Structured operational events go to `logging-microservice`; local logging is
+  the fallback, and a logging outage must never interrupt an active recording.
+- `monitoring-microservice` observes health and rollout readiness.
+- The recording screen surfaces per-track segment counts, bytes written, free
+  disk and an activity heartbeat, so a silently dead tracker is visible to the
+  operator rather than discovered after the session.
 
 ## Health and failure behavior
 

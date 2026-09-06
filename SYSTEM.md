@@ -198,3 +198,39 @@ These are live facts confirmed against the running cluster, not intentions.
 | Microphone | Jabra Link 390 (PipeWire) | Audio track source |
 | `mc` on host | GNU Midnight Commander 4.8.30 | Never use host `mc` for storage; the real client exists only at `/usr/bin/mc` inside the MinIO pod |
 | Host S3 clients | none (`aws`, `mcli`, `rclone`, `boto3` all absent) | The agent uses the Node AWS SDK |
+
+## Upstream traceability
+
+This system implements the approved intent in [`BUSINESS.md`](BUSINESS.md) and
+the product vision in
+[`docs/01_vision/VISION.md`](docs/01_vision/VISION.md). The full technical
+design, including the rejected alternatives and the reasoning behind the
+capture/post-production split, is
+[`docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`](docs/superpowers/specs/2026-09-06-screencast-recorder-design.md).
+Governance constraints come from
+[`docs/00_constitution/CONSTITUTION.md`](docs/00_constitution/CONSTITUTION.md)
+and
+[`docs/17_governance/PROJECT_INVARIANTS.md`](docs/17_governance/PROJECT_INVARIANTS.md).
+
+## Downstream artifacts
+
+- [`docs/06_architecture/INTEGRATION_CONTRACT.md`](docs/06_architecture/INTEGRATION_CONTRACT.md)
+- [`docs/11_tasks/TASK-001-bootstrap-service.md`](docs/11_tasks/TASK-001-bootstrap-service.md)
+- [`docs/12_validation/VAL-TASK-001-bootstrap-service.md`](docs/12_validation/VAL-TASK-001-bootstrap-service.md)
+- [`docs/21_execution_plans/EP-TASK-001-bootstrap-service.md`](docs/21_execution_plans/EP-TASK-001-bootstrap-service.md)
+- [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundation.md`](docs/superpowers/plans/2026-09-06-screencast-recorder-foundation.md)
+
+## Open questions
+
+- Webcam capture is unimplemented because the host currently exposes no
+  `/dev/video*` device. The track type is defined and reported as an
+  unavailable capability; it needs validation once a camera is attached.
+- The MacBook agent is designed but not implemented. The `T0` barrier and the
+  per-agent storage prefix exist so that adding it does not change the session
+  model, but the claim is unproven until a second agent runs.
+- Phase-2 post-production ownership is settled in principle — BPCP owns the
+  approval-gated process, `ai-microservice` performs the render — but the event
+  payload beyond `session.stored` is not yet specified.
+- Retention is `retain-until-published` and nothing deletes raw footage in
+  phase 1. The deletion trigger becomes real only when YouTube publication
+  exists.
