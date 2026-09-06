@@ -16,3 +16,6 @@ coverage/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Node
+package-lock.json.bak
