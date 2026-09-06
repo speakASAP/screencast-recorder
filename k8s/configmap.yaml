@@ -11,8 +11,20 @@ data:
   SERVICE_NAME: "screencast-recorder"
   DOMAIN: "screencast.alfares.cz"
   PORT: "3391"
-  # Add environment variables from .env that are non-sensitive (no secrets, API keys, passwords)
-  # Examples:
-  # DATABASE_POOL_SIZE: "10"
-  # LOG_LEVEL: "info"
-  # TIMEOUT_MS: "30000"
+
+  # Capture defaults. Non-secret, and deliberately visible here so the operator
+  # can see what a session will do before starting one.
+  #
+  # 15 fps: a screencast of code and terminals is near-static, so this roughly
+  # halves the byte volume against 30 fps with no perceptual loss for this
+  # content.
+  SCREEN_DEFAULT_FPS: "15"
+  # 60-second segments cap crash loss at one segment and let a later editing
+  # stage drop whole intervals with -c copy, without re-encoding.
+  SCREEN_SEGMENT_SECONDS: "60"
+  # 4K/15fps VAAPI runs about 8-12 GB/hour, so a four-hour session needs ~50 GB.
+  RECORDING_MIN_FREE_GB: "50"
+  # How far ahead T0 is placed once every agent is ready: long enough for the
+  # long poll to deliver the start command, short enough not to feel laggy.
+  START_BARRIER_LEAD_SECONDS: "5"
+  ACTIVITY_SAMPLE_HZ: "5"
