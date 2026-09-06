@@ -13,6 +13,8 @@ import type { Response } from 'express';
 import { AgentRoleGuard } from '../auth/agent-role.guard';
 import { AgentRoute } from '../auth/agent-roles.decorator';
 import { CommandsService } from './commands.service';
+import { ManifestDto, UploadCompleteDto } from './dto/manifest.dto';
+import { ManifestService } from './manifest.service';
 import { CreateSessionDto, ProgressDto, StatusDto } from './dto/session.dto';
 import { SessionsService } from './sessions.service';
 
@@ -22,6 +24,7 @@ export class SessionsController {
   constructor(
     private readonly sessions: SessionsService,
     private readonly commands: CommandsService,
+    private readonly manifests: ManifestService,
   ) {}
 
   @Post('sessions')
@@ -75,6 +78,20 @@ export class SessionsController {
   @HttpCode(200)
   progress(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ProgressDto) {
     return this.sessions.reportProgress(id, dto);
+  }
+
+  @Post('sessions/:id/manifest')
+  @AgentRoute()
+  @HttpCode(200)
+  manifest(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ManifestDto) {
+    return this.manifests.ingestManifest(id, dto);
+  }
+
+  @Post('sessions/:id/upload-complete')
+  @AgentRoute()
+  @HttpCode(200)
+  uploadComplete(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UploadCompleteDto) {
+    return this.manifests.completeUpload(id, dto);
   }
 
   @Post('sessions/:id/stop')

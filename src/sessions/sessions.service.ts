@@ -156,12 +156,16 @@ export class SessionsService {
   async save(sessionId: string): Promise<Session> {
     const session = await this.require(sessionId);
     await this.transition(session, SessionState.Uploading);
+
+    // Fix the prefix now and persist it. Deriving it again at verification time
+    // would recompute the date, and a session that starts before midnight and
+    // saves after it would be verified against a prefix nothing was uploaded to.
+    const prefix = this.prefixFor(session);
+    session.s3Prefix = prefix;
     await this.sessions.save(session);
 
     for (const agentId of await this.participants(sessionId)) {
-      await this.commands.queue(agentId, CommandType.Upload, sessionId, {
-        prefix: this.prefixFor(session),
-      });
+      await this.commands.queue(agentId, CommandType.Upload, sessionId, { prefix });
     }
     return session;
   }
