@@ -142,6 +142,23 @@ These are measured on the real artefacts, not assumed.
    With a single proxy file this is one presigned URL per session rather than
    hundreds, which is another reason the proxy approach is the right one.
 
+   **Do not chunk the proxy.** The instinct to split it so only small parts are
+   fetched is right about the goal and wrong about the mechanism: the browser
+   already does exactly that. Verified against this MinIO through a presigned
+   URL — the object returns `Accept-Ranges: bytes`, and a `Range: bytes=0-102399`
+   request answers `206 Partial Content` with `content-range:
+   bytes 0-102399/3208728` and transfers exactly 102400 bytes.
+
+   So a faststart proxy plus a plain `<video>` element gives seeking for free:
+   jumping to 2h30m fetches the bytes around that point and nothing else.
+   Chunking would add a manifest to maintain, a player to write, and joins to
+   get wrong, in exchange for a capability the HTTP stack already provides.
+
+   The one thing that makes this work is `-movflags +faststart`, so the `moov`
+   index is at the front of the file. Without it the browser cannot seek
+   without downloading everything, which is precisely the trap the raw segments
+   fall into.
+
 4. **Tracks are separate files.** Screen and audio were deliberately never
    muxed. Preview must play them together and stay in sync using
    `start_ms`/`pts_origin_ms`, or offer them separately and say so.
