@@ -11,6 +11,7 @@ import type { Request } from 'express';
 import { AGENT_ROUTE } from './agent-roles.decorator';
 import { PUBLIC_ROUTE } from './public.decorator';
 import { SESSION_COOKIE } from './session.constants';
+import { SessionStore } from './session.store';
 
 export interface OperatorUser {
   id: string;
@@ -34,7 +35,10 @@ export class UserAuthGuard implements CanActivate {
 
   private readonly authUrl = process.env.AUTH_SERVICE_URL ?? 'https://auth.alfares.cz';
 
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly sessions: SessionStore,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_ROUTE, [
@@ -54,9 +58,12 @@ export class UserAuthGuard implements CanActivate {
     if (isAgentRoute) return true;
 
     const request = context.switchToHttp().getRequest<Request & { user?: OperatorUser }>();
-    const token = request.cookies?.[SESSION_COOKIE];
+    const sessionId = request.cookies?.[SESSION_COOKIE];
+    if (!sessionId) throw new UnauthorizedException('Not signed in');
 
-    if (!token) throw new UnauthorizedException('Not signed in');
+    // The cookie holds an opaque id; the token lives server-side.
+    const token = this.sessions.get(sessionId);
+    if (!token) throw new UnauthorizedException('Session expired');
 
     request.user = await this.validate(token);
     return true;

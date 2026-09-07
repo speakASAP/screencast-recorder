@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { SessionStore } from './session.store';
 import { UserAuthGuard } from './user-auth.guard';
 
 const ctx = (cookies: Record<string, string> = {}): ExecutionContext =>
@@ -13,6 +14,10 @@ const ctx = (cookies: Record<string, string> = {}): ExecutionContext =>
 const reflector = (meta: Record<string, boolean>): Reflector =>
   ({ getAllAndOverride: (key: string) => meta[key] }) as unknown as Reflector;
 
+/** Resolves any id to the given token, or nothing when null. */
+const store = (token: string | null): SessionStore =>
+  ({ get: () => token }) as unknown as SessionStore;
+
 describe('UserAuthGuard', () => {
   const originalFetch = global.fetch;
   afterEach(() => {
@@ -21,20 +26,20 @@ describe('UserAuthGuard', () => {
 
   it('rejects a request with no session cookie', async () => {
     // The whole point: the console must not be reachable without signing in.
-    const guard = new UserAuthGuard(reflector({}));
+    const guard = new UserAuthGuard(reflector({}), store('tok'));
     await expect(guard.canActivate(ctx())).rejects.toThrow();
   });
 
   it('allows a route explicitly marked public', async () => {
     // Only health and the login flow, which run before a session can exist.
-    const guard = new UserAuthGuard(reflector({ public_route: true }));
+    const guard = new UserAuthGuard(reflector({ public_route: true }), store(null));
     await expect(guard.canActivate(ctx())).resolves.toBe(true);
   });
 
   it('defers a machine route to the agent guard rather than demanding a cookie', async () => {
     // The agent carries a pair-specific service token, not a session. This
     // defers; it does not leave the route unguarded -- AgentRoleGuard runs.
-    const guard = new UserAuthGuard(reflector({ agent_route: true }));
+    const guard = new UserAuthGuard(reflector({ agent_route: true }), store(null));
     await expect(guard.canActivate(ctx())).resolves.toBe(true);
   });
 
@@ -45,7 +50,7 @@ describe('UserAuthGuard', () => {
       ok: true,
       json: async () => ({ valid: false }),
     }) as never;
-    const guard = new UserAuthGuard(reflector({}));
+    const guard = new UserAuthGuard(reflector({}), store('tok'));
     await expect(guard.canActivate(ctx({ screencast_session: 'stale' }))).rejects.toThrow();
   });
 
@@ -54,7 +59,7 @@ describe('UserAuthGuard', () => {
       ok: true,
       json: async () => ({ valid: true, user: { id: 'u1', email: 'ssf@example.com' } }),
     }) as never;
-    const guard = new UserAuthGuard(reflector({}));
+    const guard = new UserAuthGuard(reflector({}), store('tok'));
     await expect(guard.canActivate(ctx({ screencast_session: 'good' }))).resolves.toBe(true);
   });
 
@@ -62,7 +67,7 @@ describe('UserAuthGuard', () => {
     // A rejected credential and a dead identity provider are different
     // problems; collapsing them hides an outage behind a login loop.
     global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as never;
-    const guard = new UserAuthGuard(reflector({}));
+    const guard = new UserAuthGuard(reflector({}), store('tok'));
     await expect(guard.canActivate(ctx({ screencast_session: 'x' }))).rejects.toMatchObject({
       status: 503,
     });

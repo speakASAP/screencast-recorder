@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, HttpCode, Post, Req, Res } 
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { Public } from './public.decorator';
+import { SessionStore } from './session.store';
 import { SESSION_COOKIE, STATE_COOKIE } from './session.constants';
 
 const AUTH_UI = process.env.AUTH_PUBLIC_URL ?? 'https://auth.alfares.cz';
@@ -11,6 +12,8 @@ const CLIENT_ID = 'screencast-recorder';
 /** Hosted Auth sign-in, per HOSTED_AUTH_CONSUMER_STANDARD.md. */
 @Controller('auth')
 export class AuthController {
+  constructor(private readonly sessions: SessionStore) {}
+
   /**
    * Sends the operator to hosted Auth.
    *
@@ -98,14 +101,22 @@ export class AuthController {
     }
 
     res.clearCookie(STATE_COOKIE, { path: '/' });
-    res.cookie(SESSION_COOKIE, body.access_token, {
+
+    // The cookie carries an opaque session id, not the token. This operator's
+    // token is ~4KB (83 roles), and a Set-Cookie carrying it exceeds the
+    // 4096-byte limit, so clients drop it silently and the login appears to
+    // work while every later request is unauthenticated.
+    const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+    const sessionId = this.sessions.create(body.access_token, SESSION_TTL_MS);
+
+    res.cookie(SESSION_COOKIE, sessionId, {
       httpOnly: true,
       secure: true,
       sameSite: 'lax',
       // Matches Auth's own access-token lifetime closely enough; the guard
       // validates server-side on every request regardless, so an expired
       // token is rejected even if the cookie outlives it.
-      maxAge: 12 * 60 * 60 * 1000,
+      maxAge: SESSION_TTL_MS,
       path: '/',
     });
     res.status(204).send();
@@ -113,7 +124,11 @@ export class AuthController {
 
   @Get('logout')
   @Public()
-  logout(@Res() res: Response): void {
+  logout(@Req() req: Request, @Res() res: Response): void {
+    const id = req.cookies?.[SESSION_COOKIE];
+    // Drop the server-side entry too: clearing only the cookie would leave a
+    // usable token in memory for anyone who kept the id.
+    if (id) this.sessions.destroy(id);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     res.redirect('/auth/login');
   }

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
 import * as cookieParser from 'cookie-parser';
+import { SessionStore } from './auth/session.store';
 import { UserAuthGuard } from './auth/user-auth.guard';
 import { sessionRedirect } from './auth/session-redirect.middleware';
 import { AppModule } from './app.module';
@@ -22,7 +23,9 @@ async function bootstrap(): Promise<void> {
   // Applied globally rather than per controller: a new route is guarded by
   // default and must opt out explicitly with @Public(), so forgetting the
   // decorator closes a route rather than exposing one.
-  app.useGlobalGuards(new UserAuthGuard(app.get(Reflector)));
+  // Resolved from the container rather than constructed here: the guard must
+  // share the one SessionStore instance the auth controller writes to.
+  app.useGlobalGuards(new UserAuthGuard(app.get(Reflector), app.get(SessionStore)));
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
