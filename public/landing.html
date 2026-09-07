@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Screencast Recorder</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="landing">
+    <main class="landing-main">
+      <h1>Screencast Recorder</h1>
+      <p class="lede">
+        Records your work across machines as separate, time-aligned tracks, so a
+        long session can be cut into a short video without hunting through hours
+        of footage.
+      </p>
+
+      <a class="cta" href="/console">Open the console</a>
+      <p class="muted signin-note">You will be asked to sign in.</p>
+
+      <section class="how">
+        <h2>How it works</h2>
+        <ol>
+          <li>
+            <strong>Pick what to record.</strong> The console lists what each
+            machine actually has — displays, microphones, cameras — reported by
+            the agent running on it, not guessed.
+          </li>
+          <li>
+            <strong>Press Start once.</strong> Every machine synchronises its
+            clock first, then all of them begin at the same instant, so the
+            tracks line up afterwards.
+          </li>
+          <li>
+            <strong>Work normally.</strong> Each source records to its own
+            segmented file. If the controller goes down, capture keeps running
+            locally.
+          </li>
+          <li>
+            <strong>Stop, then decide.</strong> Nothing leaves the machine until
+            you choose Save. Discard throws the session away.
+          </li>
+          <li>
+            <strong>Saved sessions are verified.</strong> A session counts as
+            stored only after every file has been read back from storage.
+          </li>
+        </ol>
+      </section>
+
+      <section class="how">
+        <h2>What it does not record</h2>
+        <p>
+          The activity stream that makes later editing possible captures
+          <em>counts</em> — clicks, keypresses, pointer position, the focused
+          window — and never the characters you type or your clipboard. There is
+          no setting that turns that on. Anything credential-shaped in a window
+          title is redacted before it is written.
+        </p>
+      </section>
+
+      <footer class="landing-footer">
+        <span>Part of the Alfares ecosystem</span>
+        <span aria-hidden="true">·</span>
+        <a href="/health">service health</a>
+      </footer>
+    </main>
+  </body>
+</html>

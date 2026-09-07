@@ -10,6 +10,8 @@ const res = () => {
   r.status = jest.fn().mockReturnValue(r);
   r.send = jest.fn().mockReturnValue(r);
   r.type = jest.fn().mockReturnValue(r);
+  r.json = jest.fn().mockReturnValue(r);
+  r.sendFile = jest.fn().mockReturnValue(r);
   return r;
 };
 
@@ -60,5 +62,42 @@ describe('AuthController state handling', () => {
     // The cookie holds a short opaque id, never the token itself.
     expect(call[1]).not.toBe('the-token');
     expect(call[1].length).toBeLessThan(100);
+  });
+});
+
+describe('post-sign-in destination', () => {
+  const controller = () => new AuthController(new SessionStore());
+
+  it('returns the remembered destination so the callback lands there', () => {
+    const r = res();
+    controller().session(
+      { access_token: 't', state: 'm' },
+      { cookies: { screencast_auth_state: 'm', screencast_auth_next: '/console' } } as never,
+      r,
+    );
+    expect(r.json).toHaveBeenCalledWith({ next: '/console' });
+  });
+
+  it('refuses an absolute URL as a destination, which would be an open redirect', () => {
+    // A login that can bounce a signed-in operator to an arbitrary origin is a
+    // phishing primitive, so only a same-site path is accepted.
+    const r = res();
+    controller().login(r, 'https://evil.example/steal');
+    const next = r.cookie.mock.calls.find((c: unknown[]) => c[0] === 'screencast_auth_next');
+    expect(next[1]).toBe('/console');
+  });
+
+  it('refuses a protocol-relative destination too', () => {
+    const r = res();
+    controller().login(r, '//evil.example/steal');
+    const next = r.cookie.mock.calls.find((c: unknown[]) => c[0] === 'screencast_auth_next');
+    expect(next[1]).toBe('/console');
+  });
+
+  it('keeps a legitimate same-site path', () => {
+    const r = res();
+    controller().login(r, '/console');
+    const next = r.cookie.mock.calls.find((c: unknown[]) => c[0] === 'screencast_auth_next');
+    expect(next[1]).toBe('/console');
   });
 });

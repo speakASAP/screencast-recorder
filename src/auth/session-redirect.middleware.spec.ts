@@ -8,16 +8,29 @@ const call = (path: string, cookies: Record<string, string> = {}) => {
 };
 
 describe('sessionRedirect', () => {
-  it('sends an unauthenticated browser to sign in', () => {
+  it('sends an unauthenticated browser to sign in for the console', () => {
     // Static middleware runs before guards, so without this the console HTML
     // renders for anyone and every panel then fails with a 401.
-    const { res, next } = call('/');
-    expect(res.redirect).toHaveBeenCalledWith('/auth/login');
+    const { res, next } = call('/console');
+    expect(res.redirect).toHaveBeenCalledWith(expect.stringContaining('/auth/login'));
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('lets a signed-in browser through', () => {
-    const { res, next } = call('/', { screencast_session: 'token' });
+  it('keeps the intended destination so sign-in returns there', () => {
+    const { res } = call('/console');
+    expect(res.redirect).toHaveBeenCalledWith(expect.stringContaining('next='));
+  });
+
+  it('serves the landing page without a session', () => {
+    // Bouncing every visitor to Auth makes the service unreadable to anyone
+    // who has not signed in, and strands a signed-out operator.
+    const { res, next } = call('/');
+    expect(next).toHaveBeenCalled();
+    expect(res.redirect).not.toHaveBeenCalled();
+  });
+
+  it('lets a signed-in browser through to the console', () => {
+    const { res, next } = call('/console', { screencast_session: 'token' });
     expect(next).toHaveBeenCalled();
     expect(res.redirect).not.toHaveBeenCalled();
   });

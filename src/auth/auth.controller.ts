@@ -1,9 +1,9 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Post, Query, Req, Res } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { Public } from './public.decorator';
 import { SessionStore } from './session.store';
-import { SESSION_COOKIE, STATE_COOKIE } from './session.constants';
+import { NEXT_COOKIE, SESSION_COOKIE, STATE_COOKIE } from './session.constants';
 
 const AUTH_UI = process.env.AUTH_PUBLIC_URL ?? 'https://auth.alfares.cz';
 const APP_ORIGIN = process.env.APP_PUBLIC_URL ?? 'https://screencast.alfares.cz';
@@ -23,8 +23,21 @@ export class AuthController {
    */
   @Get('login')
   @Public()
-  login(@Res() res: Response): void {
+  login(@Res() res: Response, @Query('next') next?: string): void {
     const state = randomUUID();
+
+    // Remember the intended destination across the Auth round trip. Only a
+    // same-site path is accepted: an absolute URL here would turn the login
+    // into an open redirect that could bounce a signed-in operator to an
+    // attacker's page.
+    const destination = typeof next === 'string' && /^\/[^/\\]/.test(next) ? next : '/console';
+    res.cookie(NEXT_COOKIE, destination, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 10 * 60 * 1000,
+      path: '/',
+    });
 
     res.cookie(STATE_COOKIE, state, {
       httpOnly: true,
@@ -79,7 +92,10 @@ export class AuthController {
     credentials: 'same-origin',
     body: JSON.stringify({ access_token: token, state }),
   });
-  if (r.ok) location.replace('/');
+  if (r.ok) {
+    const body = await r.json().catch(() => ({}));
+    location.replace(body.next || '/console');
+  }
   else document.getElementById('m').textContent = 'Sign-in failed: ' + (await r.text());
 })();
 </script>
@@ -96,7 +112,7 @@ export class AuthController {
    */
   @Post('session')
   @Public()
-  @HttpCode(204)
+  @HttpCode(200)
   session(
     @Body() body: { access_token?: string; state?: string },
     @Req() req: Request,
@@ -139,7 +155,10 @@ export class AuthController {
       maxAge: SESSION_TTL_MS,
       path: '/',
     });
-    res.status(204).send();
+
+    const destination = req.cookies?.[NEXT_COOKIE] || '/console';
+    res.clearCookie(NEXT_COOKIE, { path: '/' });
+    res.status(200).json({ next: destination });
   }
 
   @Get('logout')
@@ -150,7 +169,8 @@ export class AuthController {
     // usable token in memory for anyone who kept the id.
     if (id) this.sessions.destroy(id);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
-    res.redirect('/auth/login');
+    // Back to the public page, not straight into another sign-in.
+    res.redirect('/');
   }
 
   /** Who is signed in; used by the console to show the operator. */

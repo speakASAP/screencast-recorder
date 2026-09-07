@@ -17,6 +17,9 @@ import { UiModule } from './ui/ui.module';
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
       exclude: ['/api/{*splat}', '/health'],
+      // Without this the static index.html answers `/` before the controller
+      // does, and the public landing page would never be reached.
+      serveStaticOptions: { index: false },
     }),
     DatabaseModule,
     HealthModule,

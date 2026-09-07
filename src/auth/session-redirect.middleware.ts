@@ -2,7 +2,11 @@ import type { NextFunction, Request, Response } from 'express';
 import { SESSION_COOKIE } from './session.constants';
 
 /**
- * Sends an unauthenticated browser to sign in before the console is served.
+ * Sends an unauthenticated browser to sign in before the *console* is served.
+ *
+ * The landing page at `/` is public: bouncing every visitor straight to Auth
+ * makes the service unreadable to anyone who has not signed in, and gives a
+ * signed-out operator no way back except by typing a URL.
  *
  * Static file middleware runs ahead of Nest guards, so without this the page
  * HTML would render for anyone -- the API calls behind it would all 401, but
@@ -15,10 +19,16 @@ import { SESSION_COOKIE } from './session.constants';
  */
 export function sessionRedirect(req: Request, res: Response, next: NextFunction): void {
   const isAsset = /\.(css|js|png|svg|ico|woff2?)$/.test(req.path);
-  const isExempt = req.path.startsWith('/auth/') || req.path === '/health' || req.path.startsWith('/api/');
+  const isExempt =
+    req.path.startsWith('/auth/') || req.path === '/health' || req.path.startsWith('/api/');
 
-  if (isAsset || isExempt) return next();
+  // The landing page and the site root are public.
+  const isLanding = req.path === '/' || req.path === '/landing.html';
+
+  if (isAsset || isExempt || isLanding) return next();
   if (req.cookies?.[SESSION_COOKIE]) return next();
 
-  res.redirect('/auth/login');
+  // Remember where they were headed so sign-in returns them there rather than
+  // dropping them on the landing page again.
+  res.redirect(`/auth/login?next=${encodeURIComponent(req.originalUrl || '/console')}`);
 }

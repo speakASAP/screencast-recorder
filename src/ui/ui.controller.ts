@@ -1,4 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { join } from 'node:path';
+import { Public } from '../auth/public.decorator';
 import { AgentsService } from '../agents/agents.service';
 
 /** An agent silent for longer than this is not offered as a recording target. */
@@ -44,11 +47,30 @@ interface RawNamed {
  * hardcoded: a display list baked into the frontend is wrong on the next
  * machine and wrong on this one the moment a monitor is unplugged.
  */
-@Controller('api/ui')
+@Controller()
 export class UiController {
+  /**
+   * Public landing page.
+   *
+   * Served explicitly rather than as a static index, so that `/` stays public
+   * while `/console` stays guarded -- the static middleware cannot make that
+   * distinction on its own.
+   */
+  @Get()
+  @Public()
+  landing(@Res() res: Response): void {
+    res.sendFile(join(__dirname, '..', '..', 'public', 'landing.html'));
+  }
+
+  /** The operator console. Reached only with a session. */
+  @Get('console')
+  console(@Res() res: Response): void {
+    res.sendFile(join(__dirname, '..', '..', 'public', 'index.html'));
+  }
+
   constructor(private readonly agents: AgentsService) {}
 
-  @Get('agents')
+  @Get('api/ui/agents')
   async agentsView(): Promise<UiAgent[]> {
     const agents = await this.agents.listAll();
 

@@ -220,3 +220,80 @@ code {
 .who a {
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------- landing page */
+
+.landing-main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 3rem;
+}
+
+.landing-main h1 {
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+}
+
+.lede {
+  font-size: 1.05rem;
+  color: var(--muted);
+  margin: 0 0 2rem;
+  max-width: 38rem;
+}
+
+.cta {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.7rem 1.4rem;
+  border-radius: 7px;
+}
+
+.signin-note {
+  margin: 0.6rem 0 0;
+}
+
+.how {
+  margin-top: 3rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1.5rem;
+}
+
+.how h2 {
+  margin-bottom: 0.9rem;
+}
+
+.how ol {
+  padding-left: 1.2rem;
+  margin: 0;
+}
+
+.how li {
+  margin-bottom: 0.75rem;
+}
+
+.how p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.how strong {
+  color: var(--text);
+}
+
+.landing-footer {
+  margin-top: 3rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.landing-footer a {
+  color: var(--muted);
+}
