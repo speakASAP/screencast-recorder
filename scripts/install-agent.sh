@@ -30,7 +30,15 @@ mkdir -p "$INSTALL_DIR"
 rm -rf "${INSTALL_DIR:?}/dist" "${INSTALL_DIR:?}/node_modules"
 cp -r dist "$INSTALL_DIR/"
 cp package.json "$INSTALL_DIR/"
-( cd "$INSTALL_DIR" && npm ci --omit=dev --silent )
+# The lock file must travel with package.json: `npm ci` refuses to run without
+# it, and under `set -e` inside a subshell that refusal ended the installer
+# with status 0 and no message.
+cp package-lock.json "$INSTALL_DIR/"
+
+if ! ( cd "$INSTALL_DIR" && npm ci --omit=dev --silent ); then
+  echo "Failed to install runtime dependencies in ${INSTALL_DIR}" >&2
+  exit 1
+fi
 
 echo "==> Vault AppRole enrolment"
 mkdir -p "$CONFIG_DIR"
