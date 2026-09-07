@@ -29,7 +29,13 @@ export class AuthController {
     res.cookie(STATE_COOKIE, state, {
       httpOnly: true,
       secure: true,
-      sameSite: 'lax',
+      // 'none', not 'lax'. The browser leaves for auth.alfares.cz and comes
+      // back, and the callback page then reads this cookie from a fetch()
+      // rather than a top-level navigation. Lax withholds the cookie in that
+      // case, so the state check fails with "state mismatch" on every login.
+      // Safe here because the value is a single-use random token that carries
+      // no authority, and it is cleared as soon as it is used.
+      sameSite: 'none',
       maxAge: 10 * 60 * 1000,
       path: '/',
     });
@@ -68,6 +74,9 @@ export class AuthController {
   const r = await fetch('/auth/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    // Without this the state cookie is not sent at all and the exchange fails
+    // with "state mismatch" even when the state is correct.
+    credentials: 'same-origin',
     body: JSON.stringify({ access_token: token, state }),
   });
   if (r.ok) location.replace('/');
@@ -96,7 +105,18 @@ export class AuthController {
     const expected = req.cookies?.[STATE_COOKIE];
 
     if (!body.access_token) throw new BadRequestException('missing access_token');
-    if (!expected || body.state !== expected) {
+
+    // Distinguish the two failures. A missing cookie is a delivery problem
+    // (SameSite, an expired 10-minute window, cookies blocked); a present but
+    // different value is a genuine CSRF signal. Reporting both as "state
+    // mismatch" sends the reader hunting for an attack when the cause is a
+    // cookie that never arrived.
+    if (!expected) {
+      throw new BadRequestException(
+        'sign-in state cookie missing or expired; start again from /auth/login',
+      );
+    }
+    if (body.state !== expected) {
       throw new BadRequestException('state mismatch; start again from /auth/login');
     }
 
