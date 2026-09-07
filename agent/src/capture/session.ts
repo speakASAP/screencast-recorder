@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { ActivityTracker } from '../activity/tracker';
+import { InputListener, SpawnFn } from '../activity/input-listener';
 import { buildManifest, collectSegments, Manifest } from '../manifest';
 import { buildAudioArgs, buildScreenArgs } from './ffmpeg';
 import { CaptureSupervisor, TrackSpec } from './supervisor';
@@ -15,6 +16,11 @@ export interface TrackRequest {
   segment_seconds?: number;
   sample_hz?: number;
   bitrate_kbps?: number;
+}
+
+/** Test seam. Production passes nothing and the listener spawns real xinput. */
+export interface StartOptions {
+  spawnInput?: SpawnFn;
 }
 
 export interface SessionContext {
@@ -37,6 +43,7 @@ export interface SessionContext {
 export class CaptureSession {
   private readonly supervisor = new CaptureSupervisor();
   private tracker: ActivityTracker | null = null;
+  private inputListener: InputListener | null = null;
   private tracks: TrackRequest[] = [];
   private startedAt: Date | null = null;
   private endedAt: Date | null = null;
@@ -61,7 +68,7 @@ export class CaptureSession {
     return join(this.dir, this.context.hostname, folder);
   }
 
-  async start(tracks: TrackRequest[], clockOffsetMs: number): Promise<void> {
+  async start(tracks: TrackRequest[], clockOffsetMs: number, options: StartOptions = {}): Promise<void> {
     this.tracks = tracks;
     this.startedAt = new Date();
     this.clockOffsetMs = clockOffsetMs;
@@ -110,16 +117,33 @@ export class CaptureSession {
           }),
         });
       } else if (track.kind === 'metadata') {
-        this.tracker = new ActivityTracker(
+        const tracker = new ActivityTracker(
           join(outDir, 'events.jsonl'),
           track.sample_hz ?? 5,
           this.context.displays[0]?.id ?? 'unknown',
         );
+        this.tracker = tracker;
+
+        // The counters are useless without a producer, and for the whole of
+        // Phase 1 there was not one: `countKey`/`countClick` had no caller and
+        // every stored session read `keys: 0, clicks: 0`. This is that wiring.
+        //
+        // It is deliberately built here, beside the tracker, so a metadata
+        // track can never again start with nothing feeding it.
+        this.inputListener = new InputListener({
+          onKey: (hotkey) => tracker.countKey(hotkey),
+          onClick: () => tracker.countClick(),
+          spawnFn: options.spawnInput,
+          onError: (message) => console.error(`[activity] ${message}`),
+        });
       }
     }
 
     this.supervisor.start(specs);
     this.tracker?.start();
+    // Started last and never awaited: input counting is the least important
+    // thing here, and must not delay or fail the capture it annotates.
+    this.inputListener?.start();
   }
 
   private clockOffsetMs = 0;
@@ -127,6 +151,9 @@ export class CaptureSession {
   /** Graceful stop, then the manifest. Both must happen before review. */
   async stop(agentId: string): Promise<Manifest> {
     await this.supervisor.stopAll();
+    // Stopped before the tracker so the final sample cannot race a count.
+    this.inputListener?.stop();
+    this.inputListener = null;
     await this.tracker?.stop();
     this.endedAt = new Date();
 

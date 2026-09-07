@@ -49,3 +49,64 @@ describe('CaptureSession directory layout', () => {
     expect(session.dir).toBe('/home/ssf/recordings/sess-1');
   });
 });
+
+/**
+ * The regression net for the defect this file's counters shipped with.
+ *
+ * `ActivityTracker.countKey()` and `countClick()` existed, were unit-tested,
+ * passed, and had no caller anywhere in the agent. Every session recorded
+ * `keys: 0, clicks: 0` for months and the tests stayed green, because they
+ * asserted the shape of an event rather than the existence of a producer.
+ *
+ * So these tests assert the wiring itself: that starting a metadata track
+ * spawns an input listener, and that what the listener reports reaches the
+ * events file. A test that only checks `countKey()` increments a number is the
+ * test that let this through.
+ */
+describe('the activity tracker is actually fed by an input listener', () => {
+  const context = {
+    sessionId: 'sess-wire',
+    hostname: 'alfares',
+    display: ':0.0',
+    rootDir: '/tmp/screencast-test',
+    displays: [{ id: 'HDMI-A-0', width: 3840, height: 2160, x: 0, y: 0 }],
+  };
+
+  it('spawns an input listener when a metadata track starts', async () => {
+    const spawned: { command: string; args: string[] }[] = [];
+    const session = new CaptureSession(context);
+
+    await session.start(
+      [{ track_id: 'meta', kind: 'metadata', source_ref: 'activity', sample_hz: 5 }],
+      0,
+      {
+        spawnInput: (command, args) => {
+          spawned.push({ command, args });
+          return { on: () => undefined, stdout: null, stderr: null, kill: () => true } as never;
+        },
+      },
+    );
+
+    // The defect in one assertion: nothing spawned means nothing counts.
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].command).toBe('xinput');
+    expect(spawned[0].args).toEqual(['test-xi2', '--root']);
+
+    await session.stop('agent-1');
+  });
+
+  it('does not spawn an input listener without a metadata track', async () => {
+    const spawned: string[] = [];
+    const session = new CaptureSession(context);
+
+    await session.start([], 0, {
+      spawnInput: (command) => {
+        spawned.push(command);
+        return { on: () => undefined, stdout: null, stderr: null, kill: () => true } as never;
+      },
+    });
+
+    expect(spawned).toEqual([]);
+    await session.stop('agent-1');
+  });
+});
