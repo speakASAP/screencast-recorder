@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
+import * as cookieParser from 'cookie-parser';
 import { UserAuthGuard } from './auth/user-auth.guard';
 import { sessionRedirect } from './auth/session-redirect.middleware';
 import { AppModule } from './app.module';
