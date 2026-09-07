@@ -58,6 +58,18 @@ export class AgentsService {
     return { accepted: true };
   }
 
+  /**
+   * Records that an agent is alive.
+   *
+   * Called on every command poll. Enrolment and capability reports alone are
+   * not enough: an agent that is running normally may go hours without either,
+   * and the console would show it offline and refuse to start a session
+   * against a perfectly healthy machine.
+   */
+  async touch(agentId: string): Promise<void> {
+    await this.agents.update({ id: agentId }, { lastSeenAt: new Date() });
+  }
+
   async listActive(): Promise<Agent[]> {
     const all = await this.agents.find({ order: { hostname: 'ASC' } });
     const cutoff = Date.now() - ONLINE_WINDOW_MS;

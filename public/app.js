@@ -50,8 +50,18 @@ function hhmmss(ms) {
 async function api(path, options) {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    // The session is an HTTP-only cookie; page script never holds the token.
+    credentials: 'same-origin',
     ...options,
   });
+
+  // An expired session should send the operator to sign in, not surface as a
+  // confusing error on every panel.
+  if (response.status === 401) {
+    location.href = '/auth/login';
+    throw new Error('signing in');
+  }
+
   if (!response.ok) {
     let detail = `${response.status}`;
     try {
@@ -280,6 +290,13 @@ for (const button of document.querySelectorAll('nav button')) {
     if (button.dataset.screen === 'new') loadAgents();
   });
 }
+
+// Show who is signed in, so a shared screen makes the account obvious.
+api('/auth/me')
+  .then((me) => {
+    if (me && me.email) $('whoami').textContent = me.email;
+  })
+  .catch(() => undefined);
 
 $('start').addEventListener('click', startSession);
 $('stop').addEventListener('click', stopSession);

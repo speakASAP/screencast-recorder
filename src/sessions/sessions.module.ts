@@ -1,5 +1,6 @@
 import { Logger, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AgentsModule } from '../agents/agents.module';
 import { AuthModule } from '../auth/auth.module';
 import { StorageModule } from '../storage/storage.module';
 import { CommandsService } from './commands.service';
@@ -14,6 +15,7 @@ import { SessionsService } from './sessions.service';
 @Module({
   imports: [TypeOrmModule.forFeature([Session, Track, Command, Manifest]),
     AuthModule,
+    AgentsModule,
     StorageModule,],
   controllers: [SessionsController],
   providers: [SessionsService, CommandsService, ManifestService, Logger],

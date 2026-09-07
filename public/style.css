@@ -210,3 +210,13 @@ code {
   font-size: 0.85em;
   color: var(--muted);
 }
+
+.who {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.who a {
+  color: var(--muted);
+}
