@@ -1,0 +1,32 @@
+[Unit]
+Description=Screencast recording agent
+Documentation=https://github.com/speakASAP/screencast-recorder
+# Bound to the graphical session, not to boot: capture needs the X11 and
+# PipeWire sockets of a logged-in seat, which do not exist before one.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# A *user* unit deliberately. A system unit runs without this session's
+# DISPLAY, without its PipeWire socket, and without membership of the render
+# group, so it can reach neither the screen, the microphone, nor /dev/dri.
+ExecStart=/usr/bin/node %h/.local/lib/screencast-agent/dist/main.js
+
+Restart=on-failure
+RestartSec=5
+
+# SIGINT, never SIGKILL: a restart or a shutdown must give ffmpeg time to write
+# the moov atom, or the final segment of an unrepeatable recording is lost.
+KillSignal=SIGINT
+TimeoutStopSec=120
+
+Environment=NODE_ENV=production
+
+# The recording directory is the only path this service needs to write. The
+# credential file is read from ~/.config and never written.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target
