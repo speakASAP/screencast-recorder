@@ -4,8 +4,19 @@ import { Repository } from 'typeorm';
 import { CommandsService } from './commands.service';
 import { CommandType } from './entities/command.entity';
 import { Session, SessionState, isLegalTransition } from './entities/session.entity';
-import { Track, TrackKind } from './entities/track.entity';
+import { Track, TrackKind, UploadState } from './entities/track.entity';
 import { CreateSessionDto, ProgressDto, StatusDto } from './dto/session.dto';
+
+/** Live counters the console renders while a session runs and uploads. */
+export interface SessionProgress {
+  segments: number;
+  bytes: number;
+  degraded: number;
+  uploaded: number;
+  total: number;
+  freeDiskBytes: number | null;
+  activeWindow: string | null;
+}
 
 /**
  * How far ahead of "now" T0 is placed once every agent is ready.
@@ -27,6 +38,17 @@ export class SessionsService {
    * half-formed barrier and resuming into an unknown agent state.
    */
   private readonly readiness = new Map<string, Map<string, StatusDto>>();
+
+  /**
+   * Live readouts held in memory rather than persisted.
+   *
+   * Free disk and the focused window are momentary facts that matter only
+   * while a session runs. The window title especially must never reach the
+   * database: it can carry a file path, a customer name, or a credential
+   * pasted into a terminal.
+   */
+  private readonly freeDisk = new Map<string, number>();
+  private readonly activeWindow = new Map<string, string>();
 
   constructor(
     @InjectRepository(Session)
@@ -150,9 +172,11 @@ export class SessionsService {
       await this.tracks.save(track);
     }
 
-    // dto.active_window is deliberately not persisted: it is a live readout for
-    // the operator, and a window title can carry a path, a customer name, or a
-    // credential pasted into a terminal.
+    // Held in memory only, never written to the database, for the reason
+    // above: a window title can carry a path, a customer name, or a credential.
+    if (dto.free_disk_bytes !== undefined) this.freeDisk.set(sessionId, dto.free_disk_bytes);
+    if (dto.active_window) this.activeWindow.set(sessionId, dto.active_window);
+
     return { accepted: true };
   }
 
@@ -197,8 +221,29 @@ export class SessionsService {
     return session;
   }
 
-  async byId(sessionId: string): Promise<Session> {
-    return this.require(sessionId);
+  /**
+   * A session with its tracks and live progress.
+   *
+   * The console renders segment counts, byte totals and per-track health from
+   * this, so returning the bare session left every row of its table empty --
+   * the recording looked stalled while it was running perfectly.
+   */
+  async byId(sessionId: string): Promise<Session & { tracks: Track[]; progress: SessionProgress }> {
+    const session = await this.require(sessionId);
+    const tracks = await this.tracks.find({ where: { sessionId } });
+
+    return Object.assign(session, {
+      tracks,
+      progress: {
+        segments: tracks.reduce((n, t) => n + t.segmentCount, 0),
+        bytes: tracks.reduce((n, t) => n + Number(t.bytes), 0),
+        degraded: tracks.filter((t) => t.degraded).length,
+        uploaded: tracks.filter((t) => t.uploadState === UploadState.Verified).length,
+        total: tracks.length,
+        freeDiskBytes: this.freeDisk.get(sessionId) ?? null,
+        activeWindow: this.activeWindow.get(sessionId) ?? null,
+      },
+    });
   }
 
   async list(): Promise<Session[]> {

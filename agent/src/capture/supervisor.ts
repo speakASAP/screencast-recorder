@@ -1,5 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 export type SpawnFn = (command: string, args: string[]) => ChildProcess;
 
@@ -17,6 +19,9 @@ export interface TrackState {
   degraded: boolean;
   exitCode: number | null;
   lastError: string | null;
+  /** Segments finished on disk, and their total size. */
+  segments: number;
+  bytes: number;
 }
 
 interface Entry {
@@ -53,6 +58,8 @@ export class CaptureSupervisor {
         degraded: false,
         exitCode: null,
         lastError: null,
+        segments: 0,
+        bytes: 0,
       };
       const entry: Entry = { spec, proc, state, stderrTail: '' };
       this.entries.set(spec.trackId, entry);
@@ -123,7 +130,36 @@ export class CaptureSupervisor {
     return this.entries.get(trackId)?.state;
   }
 
+  /**
+   * Current state of every track, with segment counts read from disk.
+   *
+   * Counted rather than tracked in memory: the files are what actually exist,
+   * and a counter could drift from them after a restart or a failed write.
+   */
   states(): TrackState[] {
-    return [...this.entries.values()].map((entry) => entry.state);
+    return [...this.entries.values()].map((entry) => {
+      const { segments, bytes } = this.measure(entry.spec.outDir);
+      entry.state.segments = segments;
+      entry.state.bytes = bytes;
+      return entry.state;
+    });
+  }
+
+  private measure(dir: string): { segments: number; bytes: number } {
+    try {
+      const files = readdirSync(dir).filter((n) => n.startsWith('seg-'));
+      let bytes = 0;
+      for (const name of files) {
+        try {
+          bytes += statSync(join(dir, name)).size;
+        } catch {
+          // A segment can vanish between listing and stat during rotation;
+          // skipping it is better than failing the whole progress report.
+        }
+      }
+      return { segments: files.length, bytes };
+    } catch {
+      return { segments: 0, bytes: 0 };
+    }
   }
 }

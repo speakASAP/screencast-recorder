@@ -34,6 +34,7 @@ function makeService(opts: { agents: string[]; state?: SessionState }) {
   };
   const tracksRepo = {
     find: jest.fn(async () => tracks),
+    findOne: jest.fn(async () => tracks[0]),
     save: jest.fn(async (t: unknown) => t),
     create: jest.fn((t: Row) => t),
   };
@@ -50,7 +51,7 @@ function makeService(opts: { agents: string[]; state?: SessionState }) {
     commandsService as never,
   );
 
-  return { service, session, commands, commandsService };
+  return { service, session, commands, commandsService, sessionsRepo, tracksRepo };
 }
 
 describe('the readiness barrier', () => {
@@ -162,5 +163,48 @@ describe('completing a stop', () => {
     const { service, session } = makeService({ agents: ['a'], state: SessionState.Stored });
     await service.reportStatus('s1', { agent_id: 'a', state: 'stopped' } as never);
     expect(session.state).toBe(SessionState.Stored);
+  });
+});
+
+describe('progress reporting for the console', () => {
+  it('returns tracks with the session so the progress table can render', async () => {
+    // Returning the bare session left every row empty, and a healthy recording
+    // looked stalled to the operator.
+    const { service } = makeService({ agents: ['a'], state: SessionState.Recording });
+    const view = await service.byId('s1');
+    expect(Array.isArray(view.tracks)).toBe(true);
+    expect(view.progress).toBeDefined();
+  });
+
+  it('counts verified tracks so upload progress is measurable', async () => {
+    const { service } = makeService({ agents: ['a', 'b'], state: SessionState.Uploading });
+    const view = await service.byId('s1');
+    expect(view.progress.total).toBe(2);
+    expect(typeof view.progress.uploaded).toBe('number');
+  });
+
+  it('surfaces free disk and the active window without persisting them', async () => {
+    // Both are momentary readouts served to the console. The window title
+    // especially must never be WRITTEN: it can carry a path, a customer name,
+    // or a credential pasted into a terminal, and the database outlives the
+    // session.
+    const { service, sessionsRepo } = makeService({
+      agents: ['a'],
+      state: SessionState.Recording,
+    });
+    await service.reportProgress('s1', {
+      agent_id: 'a',
+      tracks: [],
+      free_disk_bytes: 500e9,
+      active_window: 'nvim — secret-project',
+    } as never);
+
+    const view = await service.byId('s1');
+    expect(view.progress.freeDiskBytes).toBe(500e9);
+    expect(view.progress.activeWindow).toBe('nvim — secret-project');
+
+    // Nothing was saved as a result of the progress report.
+    const written = JSON.stringify(sessionsRepo.save.mock.calls);
+    expect(written).not.toContain('secret-project');
   });
 });

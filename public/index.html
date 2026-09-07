@@ -73,6 +73,12 @@
         </dl>
         <button id="save" type="button" class="primary">Save to S3</button>
         <button id="discard" type="button" class="danger">Discard</button>
+
+        <div id="upload-progress" hidden>
+          <div class="bar"><div id="upload-bar"></div></div>
+          <p id="upload-count" class="muted">starting…</p>
+          <p id="upload-note" class="muted"></p>
+        </div>
         <p id="review-note" class="muted">
           Saving uploads every segment and then verifies each object exists in
           storage. Local files are kept until you have previewed the stored

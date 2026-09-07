@@ -162,8 +162,13 @@ export class CaptureSession {
     return this.supervisor.anyRunning();
   }
 
-  states(): { trackId: string; degraded: boolean }[] {
-    return this.supervisor.states().map((s) => ({ trackId: s.trackId, degraded: s.degraded }));
+  states(): { trackId: string; degraded: boolean; segments: number; bytes: number }[] {
+    return this.supervisor.states().map((s) => ({
+      trackId: s.trackId,
+      degraded: s.degraded,
+      segments: s.segments,
+      bytes: s.bytes,
+    }));
   }
 
   currentWindow(): string | null {

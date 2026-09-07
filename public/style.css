@@ -297,3 +297,69 @@ code {
 .landing-footer a {
   color: var(--muted);
 }
+
+/* ------------------------------------------------------- upload progress */
+
+#upload-progress {
+  margin-top: 1.2rem;
+  max-width: 32rem;
+}
+
+.bar {
+  height: 8px;
+  background: var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#upload-bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  /* Eased so a jump from 0 to 50% reads as movement rather than a redraw. */
+  transition: width 0.4s ease;
+}
+
+#upload-count {
+  margin: 0.5rem 0 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+td .ok,
+.ok {
+  color: var(--ok);
+}
+
+td .bad,
+.bad {
+  color: var(--danger);
+}
+
+/* Long PipeWire source ids would otherwise stretch the table off-screen. */
+td.src {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state {
+  font-size: 0.85em;
+}
+
+.state-stored {
+  color: var(--ok);
+}
+
+.state-uploading,
+.state-recording {
+  color: var(--accent);
+}
+
+.state-failed {
+  color: var(--danger);
+}
+
+.state-discarded {
+  color: var(--muted);
+}

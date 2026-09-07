@@ -16,7 +16,7 @@ export interface AgentDeps {
     start(sessionId: string, tracks: unknown[]): Promise<void>;
     stop(): Promise<void>;
     isRunning(): boolean;
-    states(): { trackId: string; degraded: boolean }[];
+    states(): { trackId: string; degraded: boolean; segments: number; bytes: number }[];
     currentWindow(): string | null;
     /** Uploads a stopped session under the given prefix and verifies readback. */
     upload(sessionId: string, prefix: string): Promise<{ objects: number; bytes: number; verified: boolean }>;
@@ -216,6 +216,10 @@ export class Agent {
           tracks: this.deps.capture.states().map((s) => ({
             track_id: s.trackId,
             degraded: s.degraded,
+            // Without these the console's progress table stays empty and a
+            // healthy recording looks stalled.
+            segments: s.segments,
+            bytes: s.bytes,
           })),
           free_disk_bytes: free,
           active_window: this.deps.capture.currentWindow(),
