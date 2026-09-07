@@ -63,10 +63,27 @@ function makeDeps(overrides: Partial<AgentDeps> = {}): TestDeps {
 const future = () => new Date(Date.now() + 1000).toISOString();
 const longPast = () => new Date(Date.now() - 60_000).toISOString();
 
+/** prepare + start, as the real protocol sequences them. */
+async function prepareAndStart(agent: Agent, sessionId = 's'): Promise<void> {
+  await agent.handle({
+    command_id: `p-${sessionId}`, type: 'prepare', session_id: sessionId,
+    payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+  } as never);
+  await agent.handle({
+    command_id: `c-${sessionId}`, type: 'start', session_id: sessionId,
+    payload: { t0: future() },
+  } as never);
+}
+
 describe('command idempotency', () => {
   it('ignores a redelivered command_id', async () => {
     const deps = makeDeps();
     const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p1', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
 
     const command = { command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() } };
     await agent.handle(command as never);
@@ -82,9 +99,7 @@ describe('resilience to a controller outage', () => {
   it('keeps recording when the API is unreachable', async () => {
     const deps = makeDeps();
     const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
-    await agent.handle({
-      command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() },
-    } as never);
+    await prepareAndStart(agent);
 
     deps.api.failWith(new Error('ECONNREFUSED'));
     await agent.tick();
@@ -97,9 +112,7 @@ describe('resilience to a controller outage', () => {
   it('queues progress reports during an outage and flushes them on reconnect', async () => {
     const deps = makeDeps();
     const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
-    await agent.handle({
-      command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() },
-    } as never);
+    await prepareAndStart(agent);
 
     deps.api.failWith(new Error('ECONNREFUSED'));
     await agent.tick();
@@ -115,9 +128,7 @@ describe('resilience to a controller outage', () => {
   it('re-reads the token once on 401 and keeps recording', async () => {
     const deps = makeDeps();
     const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
-    await agent.handle({
-      command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() },
-    } as never);
+    await prepareAndStart(agent);
 
     deps.api.failWith({ status: 401 });
     await agent.tick();
@@ -174,9 +185,7 @@ describe('disk safety during a recording', () => {
   it('stops gracefully when free disk reaches the floor', async () => {
     const deps = makeDeps();
     const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
-    await agent.handle({
-      command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() },
-    } as never);
+    await prepareAndStart(agent);
 
     (deps.disk.freeBytes as jest.Mock).mockResolvedValue(1e9);
     await agent.tick();
@@ -186,5 +195,59 @@ describe('disk safety during a recording', () => {
     expect(deps.capture.stop).toHaveBeenCalled();
     const status = deps.posted.find((p) => p.body?.reason === 'disk_below_threshold');
     expect(status).toBeDefined();
+  });
+});
+
+describe('tracks come from prepare, not from start', () => {
+  it('captures the tracks prepare supplied when start carries only t0', async () => {
+    // The live failure this pins: start's payload is only t0 by contract, so an
+    // agent reading tracks from it started nothing and still reported
+    // "recording" -- the operator watched a session capturing nothing.
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
+    await agent.handle({
+      command_id: 'c', type: 'start', session_id: 's', payload: { t0: future() },
+    } as never);
+
+    expect(deps.captureStarts).toBe(1);
+    const started = (deps.capture.start as jest.Mock).mock.calls[0][1] as unknown[];
+    expect(started).toHaveLength(1);
+  });
+
+  it('fails rather than reporting recording when no tracks were prepared', async () => {
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'c', type: 'start', session_id: 's', payload: { t0: future() },
+    } as never);
+
+    expect(deps.captureStarts).toBe(0);
+    const status = deps.posted.find((p) => p.path.includes('/status'));
+    expect(status?.body).toMatchObject({ state: 'failed', reason: 'no_tracks_prepared' });
+  });
+
+  it('reports ffmpeg_failed rather than recording when capture throws', async () => {
+    // Claiming "recording" after a failed spawn is the same class of lie.
+    const deps = makeDeps();
+    (deps.capture.start as jest.Mock).mockRejectedValueOnce(new Error('display gone'));
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1' }] },
+    } as never);
+    await agent.handle({
+      command_id: 'c', type: 'start', session_id: 's', payload: { t0: future() },
+    } as never);
+
+    const statuses = deps.posted.filter((p) => p.path.includes('/status'));
+    expect(statuses.some((s) => s.body.state === 'recording')).toBe(false);
+    expect(statuses.some((s) => s.body.reason === 'ffmpeg_failed')).toBe(true);
   });
 });

@@ -48,6 +48,8 @@ export class Agent {
   /** command_ids already applied, so at-least-once delivery is safe. */
   private readonly applied = new Set<string>();
   private readonly pending: PendingReport[] = [];
+  /** Tracks supplied by `prepare`; `start` carries only t0. */
+  private preparedTracks: unknown[] = [];
   private sessionId: string | null = null;
   private reloadedForThisOutage = false;
 
@@ -100,6 +102,9 @@ export class Agent {
     }
 
     this.sessionId = command.session_id;
+    // The track list arrives with `prepare` and NOT with `start`, whose payload
+    // is only t0. Holding it here is what lets `start` be a bare timing signal.
+    this.preparedTracks = (command.payload.tracks as unknown[]) ?? [];
     await this.report(command.session_id, { state: 'ready', clock, free_disk_bytes: free });
   }
 
@@ -111,9 +116,30 @@ export class Agent {
       return;
     }
 
+    // A start with no prepared tracks would spawn nothing and then report
+    // "recording", which is the worst possible outcome: the operator watches a
+    // session that is capturing nothing. Fail loudly instead.
+    const tracks = (command.payload.tracks as unknown[]) ?? this.preparedTracks;
+    if (tracks.length === 0) {
+      await this.report(command.session_id, { state: 'failed', reason: 'no_tracks_prepared' });
+      return;
+    }
+
     this.sessionId = command.session_id;
     await waitUntil(t0);
-    await this.deps.capture.start(command.session_id, command.payload.tracks ?? []);
+
+    try {
+      await this.deps.capture.start(command.session_id, tracks);
+    } catch (error) {
+      // Never report recording when capture did not start.
+      await this.report(command.session_id, {
+        state: 'failed',
+        reason: 'ffmpeg_failed',
+        detail: (error as Error).message,
+      });
+      return;
+    }
+
     await this.report(command.session_id, { state: 'recording' });
   }
 
