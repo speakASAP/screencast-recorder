@@ -100,9 +100,37 @@ These are measured on the real artefacts, not assumed.
    the delay — but do not assume `<video src=…>` will stream.
 
 2. **Video is 3840x2160 H.264 High.** A four-hour session is roughly 240
-   segments. Handing a browser 240 sequential 4K files is not a preview. Decide
-   deliberately: a downscaled proxy rendered once on demand is the obvious
-   approach, and it is cheap here because output measured ~1.4 GB/hour.
+   segments. Handing a browser 240 sequential 4K files is not a preview.
+
+   **Build a single low-resolution proxy per session.** This was measured on a
+   real stored session, not estimated, and it collapses every playback problem
+   at once — the 240 files become one, the faststart problem disappears because
+   you control the muxing, and the two tracks arrive already in sync:
+
+   ```bash
+   ffmpeg -vaapi_device /dev/dri/renderD128 \
+     -f concat -safe 0 -i video-segments.txt \
+     -f concat -safe 0 -i audio-segments.txt \
+     -vf 'scale=960:540,format=nv12,hwupload' -c:v h264_vaapi -qp 32 -r 10 \
+     -c:a aac -b:a 64k -ac 1 -shortest -movflags +faststart proxy.mp4
+   ```
+
+   Measured on 88 seconds of real 4K capture plus its audio: **0.6 MB output in
+   2.3 seconds** of wall time on this host's AMD VAAPI encoder. Extrapolated to
+   four hours that is roughly **100 MB and 90 seconds of GPU time**, against
+   ~6 GB of source. Roughly 11x smaller at the segment level, and one file
+   instead of 240.
+
+   960x540 at 10 fps is legible enough to recognise what was on screen and to
+   find a moment; it is not meant to be watchable output. Render it on demand
+   the first time a session is previewed, store it beside the session
+   (`preview/proxy.mp4`), and reuse it. Never render on the request path
+   without telling the operator it is happening — a four-hour session takes
+   over a minute.
+
+   The original 4K segments stay untouched. The proxy is an additional
+   artefact, never a replacement, and phase-2 editing will still cut from the
+   originals.
 
 3. **The bucket is private and there is no public read.** Media must reach the
    browser either through a presigned GET (short expiry, generated server-side)
@@ -110,6 +138,9 @@ These are measured on the real artefacts, not assumed.
    data path for video, as the design already says of upload. If you presign,
    check MinIO CORS: `scripts/set-bucket-cors.sh` exists in `minio-microservice`
    and `screencast-sessions` has not been configured.
+
+   With a single proxy file this is one presigned URL per session rather than
+   hundreds, which is another reason the proxy approach is the right one.
 
 4. **Tracks are separate files.** Screen and audio were deliberately never
    muxed. Preview must play them together and stay in sync using
@@ -165,6 +196,13 @@ Design it properly rather than treating this list as a specification.
 1. Read `AGENTS.md`, then the design spec, then `TASKS.md`.
 2. Record a real session on `alfares` through the console so you have artefacts
    to work against, and inspect the manifest and `events.jsonl` yourself.
-3. Brainstorm the approach — especially proxy rendering versus direct playback,
-   and presigned versus proxied delivery — and get owner approval before
-   writing code.
+3. Brainstorm the approach and get owner approval before writing code. The
+   proxy question is already settled by measurement above; what is still open
+   is where rendering runs (the agent has the GPU and the original files; the
+   API pod has neither), how the operator is told a render is in progress, and
+   how the activity timeline is drawn.
+
+   Note that rendering on the agent means the proxy is produced where the media
+   already is, with no 6 GB download — but it also means a new agent command,
+   and the agent is the component that must never be destabilised, because it
+   holds the only copy of a recording that cannot be repeated.
