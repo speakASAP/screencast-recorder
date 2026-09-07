@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { ActivityTracker } from '../activity/tracker';
 import { buildManifest, collectSegments, Manifest } from '../manifest';
@@ -163,12 +164,28 @@ export class CaptureSession {
   }
 
   states(): { trackId: string; degraded: boolean; segments: number; bytes: number }[] {
-    return this.supervisor.states().map((s) => ({
+    const media = this.supervisor.states().map((s) => ({
       trackId: s.trackId,
       degraded: s.degraded,
       segments: s.segments,
       bytes: s.bytes,
     }));
+
+    // The activity tracker is not an ffmpeg child, so the supervisor never
+    // sees it. Without this its row shows 0 bytes while it is writing
+    // hundreds of samples.
+    const metadata = this.tracks.find((t) => t.kind === 'metadata');
+    if (metadata && this.tracker) {
+      let bytes = 0;
+      try {
+        bytes = statSync(join(this.trackDir(metadata), 'events.jsonl')).size;
+      } catch {
+        bytes = 0;
+      }
+      media.push({ trackId: metadata.track_id, degraded: false, segments: 0, bytes });
+    }
+
+    return media;
   }
 
   currentWindow(): string | null {

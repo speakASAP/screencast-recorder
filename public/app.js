@@ -189,7 +189,20 @@ async function startSession() {
   try {
     const session = await api('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: $('session-title').value || 'Untitled session', tracks }),
+      // A dated default beats "Untitled session": several of those in the list
+      // are indistinguishable, and the operator names a session precisely when
+      // they are least inclined to type.
+      body: JSON.stringify({
+        title:
+          $('session-title').value.trim() ||
+          `Recording ${new Date().toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}`,
+        tracks,
+      }),
     });
     state.sessionId = session.id;
     state.startedAt = Date.now();
@@ -245,11 +258,22 @@ function renderTracks(session) {
           : session.state === 'recording'
             ? 'recording'
             : t.uploadState || '—';
+
+      // The activity stream is one continuous JSONL file, not segments, so a
+      // segment count of 0 would read as "captured nothing" for a track that
+      // is working perfectly.
+      const amount =
+        t.kind === 'metadata'
+          ? Number(t.bytes) > 0
+            ? 'activity log'
+            : '—'
+          : `${t.segmentCount || 0}`;
+
       return `
         <tr>
           <td>${t.kind}</td>
           <td class="src">${t.sourceRef}</td>
-          <td>${t.segmentCount || 0}</td>
+          <td>${amount}</td>
           <td>${bytes(t.bytes)}</td>
           <td>${status}</td>
         </tr>`;
@@ -283,7 +307,11 @@ function enterReview(session) {
 
   const tracks = session.tracks || [];
   $('rev-tracks').textContent = tracks.length
-    ? tracks.map((t) => `${t.kind} (${t.segmentCount || 0} seg)`).join(', ')
+    ? tracks
+        .map((t) =>
+          t.kind === 'metadata' ? 'activity log' : `${t.kind} (${t.segmentCount || 0} seg)`,
+        )
+        .join(', ')
     : '—';
   $('rev-size').textContent = bytes(
     tracks.reduce((n, t) => n + Number(t.bytes || 0), 0),
@@ -384,7 +412,12 @@ async function loadSessions() {
           <td>${session.title}</td>
           <td><span class="state state-${session.state}">${session.state}</span></td>
           <td>${session.startedAt ? new Date(session.startedAt).toLocaleString() : '—'}</td>
-          <td><code>${session.s3Prefix || '—'}</code></td>
+          <td>${
+            session.startedAt && session.endedAt
+              ? hhmmss(new Date(session.endedAt) - new Date(session.startedAt))
+              : '—'
+          }</td>
+          <td><code class="src">${session.s3Prefix || '—'}</code></td>
         </tr>`,
     )
     .join('');
