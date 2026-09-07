@@ -33,11 +33,31 @@ export interface AudioSourceView extends AudioSourceLevel {
 }
 
 export function parseVolumedetect(stderr: string): { meanDb: number; maxDb: number } {
-  const read = (key: string): number => {
-    const match = stderr.match(new RegExp(`${key}:\\s*(-?[0-9.]+) dB`));
-    return match ? Number(match[1]) : DIGITAL_SILENCE_DB;
+  const match = (key: string): RegExpMatchArray | null =>
+    stderr.match(new RegExp(`${key}:\\s*(-?[0-9.]+) dB`));
+
+  const meanMatch = match('mean_volume');
+  const maxMatch = match('max_volume');
+
+  if (!meanMatch && !maxMatch) {
+    // ffmpeg's volumedetect filter emits mean_volume and max_volume together
+    // on a successful run. Neither being present means the measurement
+    // failed to run at all (ffmpeg missing, wrong args, crashed process) --
+    // it is not evidence of a quiet stream. Falling back to
+    // DIGITAL_SILENCE_DB here would make a failed measurement
+    // indistinguishable from a genuinely silent one, and the console would
+    // tell the operator "this device was probably not the active input"
+    // about a source whose level was never actually measured -- exactly the
+    // fact this panel exists to get right.
+    throw new Error(
+      `parseVolumedetect: could not find mean_volume or max_volume in ffmpeg output: ${stderr.slice(0, 200)}`,
+    );
+  }
+
+  return {
+    meanDb: meanMatch ? Number(meanMatch[1]) : DIGITAL_SILENCE_DB,
+    maxDb: maxMatch ? Number(maxMatch[1]) : DIGITAL_SILENCE_DB,
   };
-  return { meanDb: read('mean_volume'), maxDb: read('max_volume') };
 }
 
 export function selectAudioSource(

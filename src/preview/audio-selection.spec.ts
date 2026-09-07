@@ -15,6 +15,20 @@ describe('parseVolumedetect', () => {
     ].join('\n');
     expect(parseVolumedetect(stderr)).toEqual({ meanDb: -57.2, maxDb: -20.3 });
   });
+
+  it('throws when neither field is present, rather than reporting digital silence', () => {
+    // ffmpeg's volumedetect emits mean_volume and max_volume together on
+    // success. If neither is present, the measurement failed -- it did not
+    // observe silence -- and must not collapse into the -91 dB sentinel,
+    // which would tell the operator a device was inactive when it was never
+    // actually measured.
+    expect(() => parseVolumedetect('ffmpeg: command not found')).toThrow();
+  });
+
+  it('falls back to the silence floor for only the field that is missing', () => {
+    const stderr = '[Parsed_volumedetect_0 @ 0x1] mean_volume: -57.2 dB';
+    expect(parseVolumedetect(stderr)).toEqual({ meanDb: -57.2, maxDb: -91 });
+  });
 });
 
 describe('selectAudioSource', () => {
