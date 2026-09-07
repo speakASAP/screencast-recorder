@@ -46,10 +46,18 @@ export class CaptureSession {
     return join(this.context.rootDir, this.context.sessionId);
   }
 
-  /** Directory for one track, named so the S3 key needs no translation. */
+  /**
+   * Directory for one track, named so the S3 key needs no translation.
+   *
+   * The hostname segment is load-bearing, not decoration: a session can span
+   * two machines, and without it both would write `screen-HDMI-A-0` into the
+   * same prefix and overwrite each other. It is also what the API's storage
+   * verification expects, so omitting it makes a complete upload look like a
+   * session with missing objects.
+   */
   trackDir(track: TrackRequest): string {
     const folder = track.kind === 'metadata' ? 'metadata' : `${track.kind}-${track.source_ref}`;
-    return join(this.dir, folder);
+    return join(this.dir, this.context.hostname, folder);
   }
 
   async start(tracks: TrackRequest[], clockOffsetMs: number): Promise<void> {
