@@ -18,6 +18,8 @@ export interface AgentDeps {
     isRunning(): boolean;
     states(): { trackId: string; degraded: boolean }[];
     currentWindow(): string | null;
+    /** Uploads a stopped session under the given prefix and verifies readback. */
+    upload(sessionId: string, prefix: string): Promise<{ objects: number; bytes: number; verified: boolean }>;
   };
   clock: {
     check(): Promise<{ synchronised: boolean; offset_ms: number; source: string }>;
@@ -73,6 +75,8 @@ export class Agent {
         return this.stop();
       case 'abort':
         return this.abort();
+      case 'upload':
+        return this.upload(command);
       default:
         return undefined;
     }
@@ -147,6 +151,38 @@ export class Agent {
     const sessionId = this.sessionId;
     await this.deps.capture.stop();
     if (sessionId) await this.report(sessionId, { state: 'stopped' });
+  }
+
+  /**
+   * The operator chose Save.
+   *
+   * The API decides whether the session is stored, from its own readback -- this
+   * only moves the bytes and reports what it saw. A failure here leaves the
+   * local media untouched and the session in `uploading`, which is recoverable;
+   * reporting success it did not observe would not be.
+   */
+  private async upload(command: Command): Promise<void> {
+    const prefix = command.payload.prefix as string | undefined;
+    if (!prefix) {
+      await this.report(command.session_id, { state: 'failed', reason: 'no_upload_prefix' });
+      return;
+    }
+
+    try {
+      const result = await this.deps.capture.upload(command.session_id, prefix);
+      await this.deps.api.post(`/api/sessions/${command.session_id}/upload-complete`, {
+        agent_id: this.config.agentId,
+        objects: result.objects,
+        bytes: result.bytes,
+        verified: result.verified,
+      });
+    } catch (error) {
+      await this.report(command.session_id, {
+        state: 'failed',
+        reason: 'upload_failed',
+        detail: (error as Error).message,
+      });
+    }
   }
 
   private async abort(): Promise<void> {

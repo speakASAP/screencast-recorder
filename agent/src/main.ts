@@ -8,6 +8,9 @@ import { CaptureSession, TrackRequest } from './capture/session';
 import { checkClock } from './clock';
 import { loadConfig } from './config';
 import { httpClient, loadCredentials } from './vault';
+import { Uploader, s3Client } from './upload/uploader';
+import { readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 /**
  * Entry point for the host recording agent.
@@ -84,6 +87,44 @@ async function main(): Promise<void> {
               );
           }
           session = null;
+        },
+        /**
+         * Uploads every file of a stopped session, then reads them all back.
+         *
+         * Walks the session directory rather than the manifest, so the
+         * activity stream and the manifest itself travel too -- the manifest
+         * lists media segments only, and a session missing its own timing
+         * contract is not much use to a later editing stage.
+         */
+        async upload(sessionId, prefix) {
+          const dir = join(config.recordingDir, sessionId);
+          const files: { path: string; key: string; bytes: number }[] = [];
+
+          const walk = async (current: string, keyPrefix: string): Promise<void> => {
+            for (const entry of await readdir(current, { withFileTypes: true })) {
+              const path = join(current, entry.name);
+              const key = `${keyPrefix}/${entry.name}`;
+              if (entry.isDirectory()) await walk(path, key);
+              else files.push({ path, key, bytes: (await stat(path)).size });
+            }
+          };
+          await walk(dir, prefix);
+
+          const uploader = new Uploader(
+            s3Client({
+              endpoint: credentials.minio.endpoint,
+              accessKeyId: credentials.minio.accessKeyId,
+              secretAccessKey: credentials.minio.secretAccessKey,
+              bucket: credentials.minio.bucket,
+            }),
+            credentials.minio.bucket,
+          );
+
+          const result = await uploader.uploadAll(files);
+          console.log(
+            `uploaded ${result.objects} objects (${result.bytes} bytes), verified=${result.verified}`,
+          );
+          return { objects: result.objects, bytes: result.bytes, verified: result.verified };
         },
         isRunning: () => session?.isRunning() ?? false,
         states: () => session?.states() ?? [],

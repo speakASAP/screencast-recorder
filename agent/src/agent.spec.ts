@@ -41,6 +41,7 @@ function makeDeps(overrides: Partial<AgentDeps> = {}): TestDeps {
       stop: jest.fn(async () => {
         stopped = true;
       }),
+      upload: jest.fn(async () => ({ objects: 4, bytes: 1234, verified: true })),
       isRunning: () => captureStarts > 0 && !stopped,
       states: () => [],
       currentWindow: () => 'nvim',
@@ -249,5 +250,64 @@ describe('tracks come from prepare, not from start', () => {
     const statuses = deps.posted.filter((p) => p.path.includes('/status'));
     expect(statuses.some((s) => s.body.state === 'recording')).toBe(false);
     expect(statuses.some((s) => s.body.reason === 'ffmpeg_failed')).toBe(true);
+  });
+});
+
+describe('the upload command', () => {
+  it('uploads under the prefix the API supplied and reports what it saw', async () => {
+    // The `upload` case was missing from the switch entirely, so Save moved the
+    // session to `uploading` and the agent silently ignored it: nothing was
+    // ever sent, and the session sat there for ever.
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'u', type: 'upload', session_id: 's',
+      payload: { prefix: 'sessions/2026/09/07/s' },
+    } as never);
+
+    expect(deps.capture.upload).toHaveBeenCalledWith('s', 'sessions/2026/09/07/s');
+    const posted = deps.posted.find((p) => p.path.includes('upload-complete'));
+    expect(posted?.body).toMatchObject({ objects: 4, verified: true });
+  });
+
+  it('reports the verdict it observed rather than assuming success', async () => {
+    const deps = makeDeps();
+    (deps.capture.upload as jest.Mock).mockResolvedValueOnce({
+      objects: 4, bytes: 1, verified: false,
+    });
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'u', type: 'upload', session_id: 's', payload: { prefix: 'p' },
+    } as never);
+
+    const posted = deps.posted.find((p) => p.path.includes('upload-complete'));
+    expect(posted?.body).toMatchObject({ verified: false });
+  });
+
+  it('fails loudly when the upload throws, leaving local media untouched', async () => {
+    const deps = makeDeps();
+    (deps.capture.upload as jest.Mock).mockRejectedValueOnce(new Error('connection reset'));
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'u', type: 'upload', session_id: 's', payload: { prefix: 'p' },
+    } as never);
+
+    const status = deps.posted.find((p) => p.body?.reason === 'upload_failed');
+    expect(status).toBeDefined();
+  });
+
+  it('refuses an upload command with no prefix', async () => {
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'u', type: 'upload', session_id: 's', payload: {},
+    } as never);
+
+    expect(deps.capture.upload).not.toHaveBeenCalled();
+    expect(deps.posted.find((p) => p.body?.reason === 'no_upload_prefix')).toBeDefined();
   });
 });
