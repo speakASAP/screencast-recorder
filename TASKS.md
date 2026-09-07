@@ -13,6 +13,11 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Ready next
 
+- [ ] Session preview: play back the screen, audio and activity timeline of a
+  stored session. Prompt for a fresh session:
+  `docs/superpowers/specs/2026-09-07-preview-prompt.md`. This is the precondition
+  for the retention rule, since local media is only deleted after the operator
+  has previewed the stored session.
 - [ ] Phase 2 post-production: emit `session.stored`, then the BPCP-owned
   approval chain (edit -> preview -> owner approval -> YouTube -> owner
   approval for raw deletion).
