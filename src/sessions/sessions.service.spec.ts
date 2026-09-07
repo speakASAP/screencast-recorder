@@ -136,3 +136,31 @@ describe('state transitions', () => {
     await expect(service.save('s1')).rejects.toThrow();
   });
 });
+
+describe('completing a stop', () => {
+  it('advances to review when the agent reports stopped', async () => {
+    // Without this the session sits in `stopping` for ever: the media exists
+    // and the manifest is in, but Save and Discard are unreachable.
+    const { service, session } = makeService({ agents: ['a'], state: SessionState.Stopping });
+    await service.reportStatus('s1', { agent_id: 'a', state: 'stopped' } as never);
+    expect(session.state).toBe(SessionState.Review);
+  });
+
+  it('keeps the reason when a stop was forced by the disk floor', async () => {
+    // Still a real recording worth reviewing, but the operator must be able to
+    // tell it ended early rather than at their own hand.
+    const { service, session } = makeService({ agents: ['a'], state: SessionState.Stopping });
+    await service.reportStatus('s1', {
+      agent_id: 'a', state: 'stopped', reason: 'disk_below_threshold',
+    } as never);
+    expect(session.state).toBe(SessionState.Review);
+    expect(session.failureReason).toBe('disk_below_threshold');
+  });
+
+  it('ignores a stopped report for a session that is not stopping', async () => {
+    // A late or duplicate report must not drag a stored session backwards.
+    const { service, session } = makeService({ agents: ['a'], state: SessionState.Stored });
+    await service.reportStatus('s1', { agent_id: 'a', state: 'stopped' } as never);
+    expect(session.state).toBe(SessionState.Stored);
+  });
+});

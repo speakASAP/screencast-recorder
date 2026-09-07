@@ -92,6 +92,22 @@ export class SessionsService {
       return { accepted: true };
     }
 
+    // The agent reporting `stopped` is what completes a stop. Without this the
+    // session sits in `stopping` for ever: the media is captured and the
+    // manifest is in, but the operator can never reach Save or Discard, so a
+    // finished recording is stranded.
+    if (dto.state === 'stopped') {
+      if (session.state === SessionState.Stopping) {
+        await this.transition(session, SessionState.Review);
+        // A stop forced by the disk floor is still a real recording worth
+        // reviewing, but the reason must survive so the operator knows the
+        // session ended early rather than by their own hand.
+        if (dto.reason) session.failureReason = dto.reason;
+        await this.sessions.save(session);
+      }
+      return { accepted: true };
+    }
+
     if (dto.state !== 'ready') return { accepted: true };
 
     const ready = this.readiness.get(sessionId) ?? new Map<string, StatusDto>();
