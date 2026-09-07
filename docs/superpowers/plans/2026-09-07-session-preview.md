@@ -4,7 +4,7 @@
 
 **Goal:** Let the operator see what a stored session contains — the screen video, its audio, and a timeline of window focus and mouse movement — before deciding whether to keep it.
 
-**Architecture:** The agent renders one low-resolution faststart proxy per session per audio source, because it has the GPU, 24 cores and the files while the API pod has 500m CPU, no `/dev/dri` and no ffmpeg. The API presigns a GET for that proxy and separately parses `events.jsonl` into ~1000 buckets server-side. The browser plays a plain `<video>` (Range requests give seeking for free) beside a timeline canvas.
+**Architecture:** The agent renders a low-resolution faststart video proxy plus one separate audio proxy per source, because it has the GPU, 24 cores and the files while the API pod has 500m CPU, no `/dev/dri` and no ffmpeg. The API presigns GETs for those objects and separately parses `events.jsonl` into ~1000 buckets server-side. The browser plays a plain `<video>` (Range requests give seeking for free) alongside one `<audio>` element per source, beside a timeline canvas.
 
 **Tech Stack:** NestJS 10, TypeORM 0.3, Postgres, `@aws-sdk/client-s3` (+ `@aws-sdk/s3-request-presigner`), ffmpeg/VAAPI on the agent, framework-free vanilla JS frontend, Jest + ts-jest.
 
@@ -16,6 +16,7 @@
 - **Never weaken the storage boundary.** No public bucket policy, no root credential, no widening the scoped policy beyond `screencast-sessions`. Presigning uses the already-granted `s3:GetObject`. If bucket CORS turns out to be genuinely required, **stop and raise it** — do not configure the bucket.
 - **Delete nothing.** No local media, no objects, no rows. No code path in this work may delete. Preview is not a gate on retention and authorises no deletion.
 - **Keys and clicks must never render as a zero value, a flat line, or an empty bar.** They are omitted with a note pointing at the defect in `TASKS.md`.
+- **Every audio source must be reachable.** One audio proxy per source at 24 kbps mono 22.05 kHz; the video proxy carries no audio stream. Switching source must never reload the video. A preview missing any audio proxy is not `ready`.
 - **The activity stream contains no keystroke content and must never start to.**
 - **A render never contends with a recording** — refused or deferred in code when `capture.isRunning()` is true.
 - **No silent failures.** "Not found" and "lookup failed" stay distinguishable. Every catch re-throws or logs with full context.
@@ -244,7 +245,11 @@ git commit -m "feat(preview): bucket the activity stream for display"
 
 ---
 
-### Task 2: Audio source selection by measured level (pure module)
+### Task 2: Audio source levels and initial selection (pure module)
+
+Every source is rendered and reachable; this module decides which one the
+console starts on, and labels the levels. It does **not** decide which source
+gets rendered — all of them do.
 
 **Files:**
 - Create: `src/preview/audio-selection.ts`
@@ -258,12 +263,19 @@ git commit -m "feat(preview): bucket the activity stream for display"
   - `interface AudioSourceView extends AudioSourceLevel { silent: boolean; selected: boolean; reason: string }`
   - `function selectAudioSource(levels: AudioSourceLevel[], override?: string): AudioSourceView[]`
   - `function parseVolumedetect(stderr: string): { meanDb: number; maxDb: number }`
+  - `function audioObjectKey(prefix: string, sourceRef: string): string`
+  - `function missingAudioProxies(expectedSourceRefs: string[], renderedKeys: string[], prefix: string): string[]`
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // src/preview/audio-selection.spec.ts
-import { parseVolumedetect, selectAudioSource } from './audio-selection';
+import {
+  audioObjectKey,
+  missingAudioProxies,
+  parseVolumedetect,
+  selectAudioSource,
+} from './audio-selection';
 
 const level = (sourceRef: string, meanDb: number, maxDb: number) => ({ sourceRef, meanDb, maxDb });
 
@@ -303,6 +315,47 @@ describe('selectAudioSource', () => {
   it('selects nothing when there are no audio sources', () => {
     expect(selectAudioSource([])).toEqual([]);
   });
+
+  it('keeps every source in the view, including the silent ones', () => {
+    // All sources are rendered and reachable; selection only decides which
+    // one the console starts on. Dropping a silent source here would make it
+    // unreachable, which is the failure this design exists to prevent.
+    const view = selectAudioSource([
+      level('jabra', -91, -91), level('usb1', -91, -91), level('usb2', -57.2, -20.3),
+    ]);
+    expect(view.map((v) => v.sourceRef).sort()).toEqual(['jabra', 'usb1', 'usb2']);
+  });
+});
+
+describe('missingAudioProxies', () => {
+  it('names the sources whose proxy was not rendered', () => {
+    // Three sources with two proxies is an incomplete preview, and the
+    // missing one is exactly the one the operator would have needed.
+    const missing = missingAudioProxies(
+      ['jabra', 'usb1', 'usb2'],
+      ['p/preview/audio-jabra.m4a', 'p/preview/audio-usb2.m4a'],
+      'p',
+    );
+    expect(missing).toEqual(['usb1']);
+  });
+
+  it('reports nothing missing for a complete set', () => {
+    const missing = missingAudioProxies(
+      ['jabra'], ['p/preview/audio-jabra.m4a'], 'p',
+    );
+    expect(missing).toEqual([]);
+  });
+});
+
+describe('audioObjectKey', () => {
+  it('makes a filesystem-safe key from a PipeWire source name', () => {
+    // Real source refs contain dots and hyphens, e.g.
+    // alsa_input.usb-_Jabra_Link_390_6CFBEDCB8388-00.mono-fallback
+    const key = audioObjectKey('sessions/2026/09/07/s1', 'alsa_input.usb-_Jabra_Link_390-00.mono-fallback');
+    expect(key.startsWith('sessions/2026/09/07/s1/preview/audio-')).toBe(true);
+    expect(key.endsWith('.m4a')).toBe(true);
+    expect(key).not.toMatch(/\s/);
+  });
 });
 ```
 
@@ -317,18 +370,22 @@ Expected: FAIL — `Cannot find module './audio-selection'`
 // src/preview/audio-selection.ts
 
 /**
- * Chooses which audio source the preview proxy carries.
+ * Levels and initial audio selection for the preview.
  *
- * The proxy carries one stream because a browser plays only the first audio
- * track in a <video> element and exposes no switcher, so extra streams would
- * be unreachable.
+ * EVERY source is rendered to its own proxy file and is reachable in the
+ * console. This module only decides which one playback starts on, and labels
+ * what each source captured.
  *
- * "Loudest wins" is a heuristic and it can pick wrong: a quiet, correct
- * microphone alongside a louder ambient source is the owner's intended use,
- * not an exotic edge. That is why the operator override exists and why every
- * source's level is shown rather than only the winner's -- a wrong pick is
- * visible and costs a click, instead of producing a silently misleading
- * preview.
+ * That shape exists because a browser plays only the first audio track of a
+ * <video> element and exposes no switcher, so muxing several streams into one
+ * file would leave all but the first unreachable. Separate files plus separate
+ * <audio> elements is what makes every source actually selectable.
+ *
+ * "Loudest" is only a starting point, never the whole mechanism: the owner
+ * uses different headsets across sessions, so which source carried signal
+ * varies. Auto-selecting a single track to render would sometimes render the
+ * wrong one and leave the right one unreachable -- and it would fail silently,
+ * because a preview that plays some audio looks like it is working.
  */
 
 /** ffmpeg reports a stream with no signal at all as exactly -91.0 dB. */
@@ -377,12 +434,41 @@ export function selectAudioSource(
         : '',
   }));
 }
+
+/**
+ * Object key for one source's audio proxy.
+ *
+ * A PipeWire source ref carries dots and hyphens
+ * (alsa_input.usb-_Jabra_Link_390_6CFBEDCB8388-00.mono-fallback), so it is
+ * slugged rather than interpolated raw -- an unslugged ref would produce keys
+ * that are awkward to round-trip through a URL path segment.
+ */
+export function audioObjectKey(prefix: string, sourceRef: string): string {
+  const slug = sourceRef.replace(/[^A-Za-z0-9_-]+/g, '_');
+  return `${prefix}/preview/audio-${slug}.m4a`;
+}
+
+/**
+ * Names the sources whose proxy is absent.
+ *
+ * A preview offering two of three sources is worse than one that reports
+ * itself incomplete: the missing source is exactly the one the operator would
+ * have needed, and a partial set that reports ready hides that.
+ */
+export function missingAudioProxies(
+  expectedSourceRefs: string[],
+  renderedKeys: string[],
+  prefix: string,
+): string[] {
+  const rendered = new Set(renderedKeys);
+  return expectedSourceRefs.filter((ref) => !rendered.has(audioObjectKey(prefix, ref)));
+}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest src/preview/audio-selection.spec.ts`
-Expected: PASS, 5 tests
+Expected: PASS, 9 tests
 
 - [ ] **Step 5: Commit**
 
@@ -405,7 +491,8 @@ git commit -m "feat(preview): pick the proxy audio source by measured level"
 - Consumes: nothing.
 - Produces:
   - `enum PreviewState { Pending = 'pending', Rendering = 'rendering', Ready = 'ready', Failed = 'failed' }`
-  - `class SessionPreview` with `id`, `sessionId`, `audioSourceRef` (`string | null`), `state`, `objectKey` (`string | null`), `bytes` (`string`), `durationMs` (`number | null`), `sourcePath` (`'local' | 'storage' | null`), `failureReason` (`string | null`), `requestedAt`, `readyAt`
+  - `interface PreviewArtifact { kind: 'video' | 'audio'; sourceRef: string | null; objectKey: string; bytes: number; durationMs: number | null }`
+  - `class SessionPreview` with `id`, `sessionId`, `state`, `artifacts` (`PreviewArtifact[]`, jsonb), `sourcePath` (`'local' | 'storage' | null`), `failureReason` (`string | null`), `requestedAt`, `readyAt`
   - `function isLegalPreviewTransition(from: PreviewState, to: PreviewState): boolean`
 
 - [ ] **Step 1: Write the failing test**
@@ -462,15 +549,31 @@ export function isLegalPreviewTransition(from: PreviewState, to: PreviewState): 
   return LEGAL[from].includes(to);
 }
 
+/** One rendered object: the video proxy, or one source's audio proxy. */
+export interface PreviewArtifact {
+  kind: 'video' | 'audio';
+  /** Null for the video proxy, which carries no audio stream. */
+  sourceRef: string | null;
+  objectKey: string;
+  bytes: number;
+  durationMs: number | null;
+}
+
 /**
- * One rendered proxy, per session per audio source.
+ * One preview per session -- NOT one per audio source.
  *
- * Keyed by audio source because the operator can override the automatic pick,
- * and a re-render for a different microphone is cached beside the first rather
- * than replacing it -- a wrong pick then costs a click, not a re-render wait.
+ * A render produces the whole set at once (the video proxy plus one audio
+ * proxy per source), because every source must be reachable: a browser plays
+ * only the first audio track of a <video>, so muxing would strand all but one.
+ * Rendering them together means switching source in the console costs nothing
+ * and needs no second render.
+ *
+ * The artifact list is what makes completeness checkable rather than assumed:
+ * a session with three audio sources and two audio proxies is incomplete, and
+ * must be visible as such rather than quietly offering two.
  */
 @Entity('session_previews')
-@Index(['sessionId', 'audioSourceRef'], { unique: true })
+@Index(['sessionId'], { unique: true })
 export class SessionPreview {
   @PrimaryColumn({ type: 'uuid' })
   id: string = randomUUID();
@@ -478,21 +581,11 @@ export class SessionPreview {
   @Column({ type: 'uuid' })
   sessionId!: string;
 
-  /** Null when the session has no audio track at all. */
-  @Column({ type: 'text', nullable: true })
-  audioSourceRef!: string | null;
-
   @Column({ type: 'text', default: PreviewState.Pending })
   state!: PreviewState;
 
-  @Column({ type: 'text', nullable: true })
-  objectKey!: string | null;
-
-  @Column({ type: 'bigint', default: 0 })
-  bytes!: string;
-
-  @Column({ type: 'integer', nullable: true })
-  durationMs!: number | null;
+  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  artifacts!: PreviewArtifact[];
 
   /** Which path the render read from; the two have very different waits. */
   @Column({ type: 'text', nullable: true })
@@ -514,7 +607,12 @@ export class SessionPreview {
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Rendered preview proxies, one row per session per audio source.
+ * Rendered preview proxies, one row per session.
+ *
+ * The rendered objects live in the `artifacts` jsonb rather than in columns,
+ * because a session has one video proxy and a variable number of audio
+ * proxies -- one per capture source -- and that set is what completeness is
+ * checked against.
  *
  * No foreign key cascade delete is declared here beyond the session link,
  * and nothing in the preview subsystem deletes rows or objects.
@@ -525,26 +623,23 @@ export class SessionPreview1757200300000 implements MigrationInterface {
       CREATE TABLE "session_previews" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "sessionId" uuid NOT NULL REFERENCES "sessions"("id") ON DELETE CASCADE,
-        "audioSourceRef" text,
         "state" text NOT NULL DEFAULT 'pending',
-        "objectKey" text,
-        "bytes" bigint NOT NULL DEFAULT 0,
-        "durationMs" integer,
+        "artifacts" jsonb NOT NULL DEFAULT '[]'::jsonb,
         "sourcePath" text,
         "failureReason" text,
         "requestedAt" timestamptz NOT NULL DEFAULT now(),
         "readyAt" timestamptz
       )
     `);
-    // One proxy per session per audio source; a repeat request reuses the row.
+    // One preview per session; a repeat request reuses the row.
     await queryRunner.query(`
-      CREATE UNIQUE INDEX "IDX_session_previews_session_source"
-      ON "session_previews" ("sessionId", "audioSourceRef")
+      CREATE UNIQUE INDEX "IDX_session_previews_session"
+      ON "session_previews" ("sessionId")
     `);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX "IDX_session_previews_session_source"`);
+    await queryRunner.query(`DROP INDEX "IDX_session_previews_session"`);
     await queryRunner.query(`DROP TABLE "session_previews"`);
   }
 }
@@ -676,13 +771,17 @@ git commit -m "feat(preview): presign media GETs and read small text objects"
 - Modify: `src/app.module.ts` (import `PreviewModule`)
 
 **Interfaces:**
-- Consumes: `buildTimeline`, `parseSamples` (Task 1); `selectAudioSource`, `AudioSourceLevel` (Task 2); `SessionPreview`, `PreviewState`, `isLegalPreviewTransition` (Task 3); `StorageService.presignGet`, `StorageService.getObjectText` (Task 4); `CommandsService.queue`, `CommandType` (existing); `Session`, `Track`, `Manifest` (existing).
+- Consumes: `buildTimeline`, `parseSamples` (Task 1); `selectAudioSource`, `audioObjectKey`, `missingAudioProxies`, `AudioSourceView` (Task 2); `SessionPreview`, `PreviewState`, `PreviewArtifact`, `isLegalPreviewTransition` (Task 3); `StorageService.presignGet`, `StorageService.getObjectText` (Task 4); `CommandsService.queue`, `CommandType` (existing); `Session`, `Track`, `Manifest` (existing).
 - Produces:
   - `PreviewService.status(sessionId: string): Promise<PreviewStatus>`
   - `PreviewService.timeline(sessionId: string, bucketCount: number): Promise<Timeline>`
-  - `PreviewService.requestRender(sessionId: string, audioSourceRef?: string): Promise<PreviewStatus>`
-  - `PreviewService.mediaUrl(sessionId: string, audioSourceRef?: string): Promise<string>`
+  - `PreviewService.requestRender(sessionId: string): Promise<PreviewStatus>`
+  - `PreviewService.videoUrl(sessionId: string): Promise<string>`
+  - `PreviewService.audioUrl(sessionId: string, sourceRef: string): Promise<string>`
   - `interface PreviewStatus { sessionId: string; state: PreviewState; audioSources: AudioSourceView[]; sourcePath: 'local' | 'storage' | null; failureReason: string | null; durationMs: number | null; keysAndClicks: 'not-captured' }`
+
+Note `requestRender` takes **no** source argument: one render produces every
+source. `audioUrl` is per source because each is a separate object.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -767,11 +866,37 @@ describe('PreviewService.requestRender', () => {
     await expect(service.requestRender('s1')).rejects.toThrow(/not stored/i);
   });
 
-  it('does not re-render a ready proxy', async () => {
+  it('does not re-render a ready preview', async () => {
     const { service, previews, commands } = makeService();
-    previews.findOne.mockResolvedValue({ state: PreviewState.Ready, audioSourceRef: 'usb2' });
-    await service.requestRender('s1', 'usb2');
+    previews.findOne.mockResolvedValue({ state: PreviewState.Ready, artifacts: [] });
+    await service.requestRender('s1');
     expect(commands.queue).not.toHaveBeenCalled();
+  });
+});
+
+describe('PreviewService.audioUrl', () => {
+  it('presigns the proxy for the requested source', async () => {
+    const { service, previews, storage } = makeService();
+    previews.findOne.mockResolvedValue({
+      state: PreviewState.Ready,
+      artifacts: [
+        { kind: 'video', sourceRef: null, objectKey: 'p/preview/proxy.mp4', bytes: 1, durationMs: 1 },
+        { kind: 'audio', sourceRef: 'usb2', objectKey: 'p/preview/audio-usb2.m4a', bytes: 1, durationMs: 1 },
+      ],
+    });
+    await service.audioUrl('s1', 'usb2');
+    expect(storage.presignGet).toHaveBeenCalledWith('p/preview/audio-usb2.m4a', expect.any(Number));
+  });
+
+  it('raises for a source that has no rendered proxy rather than falling back to another', async () => {
+    // Falling back to a different microphone would play the operator audio
+    // from a source they did not choose, and nothing on screen would say so.
+    const { service, previews } = makeService();
+    previews.findOne.mockResolvedValue({
+      state: PreviewState.Ready,
+      artifacts: [{ kind: 'audio', sourceRef: 'usb2', objectKey: 'k', bytes: 1, durationMs: 1 }],
+    });
+    await expect(service.audioUrl('s1', 'jabra')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 ```
@@ -787,15 +912,16 @@ Key requirements the implementation must satisfy:
 - `status` returns `keysAndClicks: 'not-captured'` **always**, as a literal — never a number, never omitted.
 - `timeline` locates `events.jsonl` from the manifest's metadata track at `<prefix>/<hostname>/metadata/events.jsonl`, reads it via `storage.getObjectText`, and throws `NotFoundException` when it is absent — never returns an empty timeline for a missing file.
 - `timeline` handles a **multi-host session**: iterate every manifest, concatenate their samples, and sort by `ts` (`parseSamples` already sorts). Do not hardcode a single manifest.
-- `requestRender` throws `BadRequestException` unless `session.state === SessionState.Stored`, and returns early without queueing when a `ready` row already exists for that audio source.
-- `requestRender` resolves the agent id from the manifest's `agent_id`, and passes `{ prefix, audioSourceRef, previewId }` as the command payload.
-- `mediaUrl` throws `NotFoundException` when no `ready` row exists — it must never silently regenerate a proxy.
+- `requestRender` throws `BadRequestException` unless `session.state === SessionState.Stored`, and returns early without queueing when a `ready` row already exists. It takes **no** source argument — one render produces every source, so switching source later never queues a second render.
+- `requestRender` resolves the agent id from the manifest's `agent_id`, and passes `{ prefix, audioSourceRefs, previewId }` as the command payload, where `audioSourceRefs` is every audio track's `source_ref` from the manifests.
+- `status` derives `audioSources` from the manifest's audio tracks joined with the levels the agent reported, via `selectAudioSource`. Every source appears, whether or not it carried signal.
+- `videoUrl` and `audioUrl` throw `NotFoundException` when the preview is not `ready` or the requested artifact is absent — never silently regenerate, and **never fall back to a different source**: playing audio from a microphone the operator did not choose, with nothing on screen saying so, is exactly the silent substitution this design forbids.
 - Register `PreviewModule` in `src/app.module.ts`, importing `TypeOrmModule.forFeature([Session, Manifest, SessionPreview])`, `StorageModule`, `SessionsModule`, `AuthModule`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx jest src/preview/preview.service.spec.ts`
-Expected: PASS, 6 tests
+Expected: PASS, 8 tests
 
 - [ ] **Step 5: Commit**
 
@@ -815,7 +941,7 @@ git commit -m "feat(preview): serve preview status, timeline and render requests
 
 **Interfaces:**
 - Consumes: `PreviewService` (Task 5).
-- Produces: routes `GET /api/sessions/:id/preview`, `POST /api/sessions/:id/preview`, `GET /api/sessions/:id/preview/media`, `GET /api/sessions/:id/timeline`.
+- Produces: routes `GET /api/sessions/:id/preview`, `POST /api/sessions/:id/preview`, `GET /api/sessions/:id/preview/media`, `GET /api/sessions/:id/preview/audio/:sourceRef`, `GET /api/sessions/:id/timeline`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -830,7 +956,7 @@ describe('PreviewController lanes', () => {
     // Preview is the operator lane. An @AgentRoute() here would let the
     // machine credential read an operator's session; a @Public() would let
     // anyone. The global UserAuthGuard is the only thing that should cover it.
-    const methods = ['status', 'requestRender', 'media', 'timeline'] as const;
+    const methods = ['status', 'requestRender', 'media', 'audio', 'timeline'] as const;
     for (const method of methods) {
       const handler = PreviewController.prototype[method];
       expect(Reflect.getMetadata(AGENT_ROUTE, handler)).toBeUndefined();
@@ -842,11 +968,22 @@ describe('PreviewController lanes', () => {
 describe('PreviewController.media', () => {
   it('redirects to the presigned url rather than proxying the bytes', async () => {
     // The API is the control plane, not the video data path.
-    const service = { mediaUrl: jest.fn().mockResolvedValue('https://signed') };
+    const service = { videoUrl: jest.fn().mockResolvedValue('https://signed') };
     const controller = new PreviewController(service as never);
     const res = { redirect: jest.fn() };
-    await controller.media('s1', undefined, res as never);
+    await controller.media('s1', res as never);
     expect(res.redirect).toHaveBeenCalledWith(302, 'https://signed');
+  });
+});
+
+describe('PreviewController.audio', () => {
+  it('redirects to the presigned url for the named source', async () => {
+    const service = { audioUrl: jest.fn().mockResolvedValue('https://signed-audio') };
+    const controller = new PreviewController(service as never);
+    const res = { redirect: jest.fn() };
+    await controller.audio('s1', 'usb2', res as never);
+    expect(service.audioUrl).toHaveBeenCalledWith('s1', 'usb2');
+    expect(res.redirect).toHaveBeenCalledWith(302, 'https://signed-audio');
   });
 });
 ```
@@ -886,9 +1023,10 @@ export class PreviewController {
     return this.preview.status(id);
   }
 
+  /** No source parameter: one render produces every audio source. */
   @Post(':id/preview')
-  requestRender(@Param('id', ParseUUIDPipe) id: string, @Query('audio') audio?: string) {
-    return this.preview.requestRender(id, audio);
+  requestRender(@Param('id', ParseUUIDPipe) id: string) {
+    return this.preview.requestRender(id);
   }
 
   /**
@@ -897,12 +1035,24 @@ export class PreviewController {
    * directly, which is what makes seeking work.
    */
   @Get(':id/preview/media')
-  async media(
+  async media(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {
+    res.redirect(302, await this.preview.videoUrl(id));
+  }
+
+  /**
+   * One audio proxy per source, each separately addressable.
+   *
+   * Separate objects rather than extra streams in the video: a browser plays
+   * only the first audio track of a <video> and exposes no switcher, so
+   * muxing would leave every source but one unreachable.
+   */
+  @Get(':id/preview/audio/:sourceRef')
+  async audio(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('audio') audio: string | undefined,
+    @Param('sourceRef') sourceRef: string,
     @Res() res: Response,
   ): Promise<void> {
-    res.redirect(302, await this.preview.mediaUrl(id, audio));
+    res.redirect(302, await this.preview.audioUrl(id, sourceRef));
   }
 
   @Get(':id/timeline')
@@ -916,7 +1066,7 @@ export class PreviewController {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx jest src/preview/preview.controller.spec.ts`
-Expected: PASS, 2 tests
+Expected: PASS, 3 tests
 
 - [ ] **Step 5: Commit**
 
@@ -936,19 +1086,25 @@ git commit -m "feat(preview): expose operator-lane preview routes"
 **Interfaces:**
 - Consumes: nothing from earlier tasks (the agent is a separate build).
 - Produces:
-  - `interface RenderInput { videoSegments: string[]; audioSegments: string[]; outPath: string }`
-  - `function buildProxyArgs(input: RenderInput): string[]`
+  - `function buildVideoProxyArgs(concatListPath: string, outPath: string): string[]`
+  - `function buildAudioProxyArgs(concatListPath: string, outPath: string): string[]`
   - `function buildVolumedetectArgs(concatListPath: string): string[]`
   - `function buildConcatList(paths: string[]): string`
+  - `const VAAPI_DEVICE = '/dev/dri/renderD128'`
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // agent/src/preview/render.spec.ts
-import { buildConcatList, buildProxyArgs, buildVolumedetectArgs } from './render';
+import {
+  buildAudioProxyArgs,
+  buildConcatList,
+  buildVideoProxyArgs,
+  buildVolumedetectArgs,
+} from './render';
 
-describe('buildProxyArgs', () => {
-  const args = buildProxyArgs({ videoSegments: ['/v.txt'], audioSegments: ['/a.txt'], outPath: '/out.mp4' });
+describe('buildVideoProxyArgs', () => {
+  const args = buildVideoProxyArgs('/v.txt', '/out.mp4');
 
   it('puts moov at the front, which is what makes seeking work', () => {
     // Without faststart the browser must download the whole file before it
@@ -968,8 +1124,32 @@ describe('buildProxyArgs', () => {
     expect(args).toContain('/dev/dri/renderD128');
   });
 
-  it('carries exactly one audio stream, because a browser plays only the first', () => {
-    expect(args.filter((a) => a === '-c:a')).toHaveLength(1);
+  it('carries no audio stream at all', () => {
+    // Audio lives in separate per-source files. Muxing even one stream here
+    // would make that source the only reachable one, because a browser plays
+    // only the first audio track of a <video> and exposes no switcher.
+    expect(args).toContain('-an');
+    expect(args).not.toContain('-c:a');
+  });
+});
+
+describe('buildAudioProxyArgs', () => {
+  const args = buildAudioProxyArgs('/a.txt', '/out.m4a');
+
+  it('encodes speech at 24k mono 22.05kHz, intelligible rather than pretty', () => {
+    // Three tracks at 64k would outweigh the video four to one. This is a
+    // preview for judging what was captured, not a listening copy.
+    expect(args).toContain('24k');
+    expect(args.join(' ')).toContain('-ac 1');
+    expect(args).toContain('22050');
+  });
+
+  it('carries no video stream', () => {
+    expect(args).toContain('-vn');
+  });
+
+  it('is faststart too, so seeking the audio does not download it whole', () => {
+    expect(args).toContain('+faststart');
   });
 });
 
@@ -1002,24 +1182,26 @@ Expected: FAIL — `Cannot find module './render'`
 // agent/src/preview/render.ts
 
 /**
- * Builds the ffmpeg invocations for a preview proxy.
+ * Builds the ffmpeg invocations for a preview render.
  *
  * Rendering runs here rather than in the API because the API pod has 500m of
  * CPU, no /dev/dri and no ffmpeg binary: software-only rendering there measured
  * ~98-123 minutes for a four-hour session while also serving the console. This
  * host has the GPU, 24 cores and the files.
  *
+ * A render produces a SILENT video proxy plus one audio proxy per capture
+ * source. The split exists because a browser plays only the first audio track
+ * of a <video> element and exposes no switcher, so muxing would leave every
+ * source but one permanently unreachable -- and the owner uses different
+ * headsets across sessions, so which source carried signal varies.
+ *
+ * Measured, the split is also cheaper than muxing: ~86.7 MB of video plus
+ * ~54.0 MB for three audio sources over four hours, against ~211 MB for the
+ * single muxed file it replaces.
+ *
  * Argument construction is separated from execution so the flags that matter --
  * faststart above all -- are testable without spawning ffmpeg.
  */
-
-export interface RenderInput {
-  /** Path to an ffmpeg concat list file for the screen segments. */
-  videoSegments: string[];
-  /** Path to an ffmpeg concat list file for the chosen audio source. */
-  audioSegments: string[];
-  outPath: string;
-}
 
 export const VAAPI_DEVICE = '/dev/dri/renderD128';
 
@@ -1027,22 +1209,37 @@ export function buildConcatList(paths: string[]): string {
   return paths.map((path) => `file '${path}'\n`).join('');
 }
 
-export function buildProxyArgs(input: RenderInput): string[] {
+/** The screen proxy. Deliberately silent: audio ships as separate files. */
+export function buildVideoProxyArgs(concatListPath: string, outPath: string): string[] {
   return [
     '-y', '-loglevel', 'error',
     '-vaapi_device', VAAPI_DEVICE,
-    '-f', 'concat', '-safe', '0', '-i', input.videoSegments[0],
-    '-f', 'concat', '-safe', '0', '-i', input.audioSegments[0],
+    '-f', 'concat', '-safe', '0', '-i', concatListPath,
+    '-an',
     '-vf', 'scale=960:540,format=nv12,hwupload',
     '-c:v', 'h264_vaapi', '-qp', '32', '-r', '10',
-    // One audio stream: a browser plays only the first track in <video> and
-    // exposes no switcher, so extra streams would be unreachable weight.
-    '-c:a', 'aac', '-b:a', '64k', '-ac', '1',
-    '-shortest',
     // The whole point: moov at the front, so the browser can seek without
     // downloading the file.
     '-movflags', '+faststart',
-    input.outPath,
+    outPath,
+  ];
+}
+
+/**
+ * One source's audio proxy.
+ *
+ * 24 kbps mono at 22.05 kHz: speech stays intelligible, and intelligibility is
+ * the entire requirement here. At 64 kbps three sources would outweigh the
+ * video four to one.
+ */
+export function buildAudioProxyArgs(concatListPath: string, outPath: string): string[] {
+  return [
+    '-y', '-loglevel', 'error',
+    '-f', 'concat', '-safe', '0', '-i', concatListPath,
+    '-vn',
+    '-c:a', 'aac', '-b:a', '24k', '-ac', '1', '-ar', '22050',
+    '-movflags', '+faststart',
+    outPath,
   ];
 }
 
@@ -1059,7 +1256,7 @@ export function buildVolumedetectArgs(concatListPath: string): string[] {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx jest agent/src/preview/render.spec.ts`
-Expected: PASS, 6 tests
+Expected: PASS, 9 tests
 
 - [ ] **Step 5: Commit**
 
@@ -1081,8 +1278,10 @@ This is the task that touches the agent, the component holding the only copy of 
 - Modify: `src/sessions/entities/command.entity.ts` — add `RenderPreview = 'render-preview'` to `CommandType`
 
 **Interfaces:**
-- Consumes: `buildProxyArgs`, `buildConcatList`, `buildVolumedetectArgs` (Task 7).
-- Produces: `AgentDeps.capture.renderPreview(sessionId: string, prefix: string, audioSourceRef?: string): Promise<{ objectKey: string; bytes: number; durationMs: number; sourcePath: 'local' | 'storage' }>`
+- Consumes: `buildVideoProxyArgs`, `buildAudioProxyArgs`, `buildConcatList`, `buildVolumedetectArgs` (Task 7).
+- Produces:
+  - `interface RenderedArtifact { kind: 'video' | 'audio'; sourceRef: string | null; objectKey: string; bytes: number; durationMs: number | null; meanDb?: number; maxDb?: number }`
+  - `AgentDeps.capture.renderPreview(sessionId: string, prefix: string, audioSourceRefs: string[]): Promise<{ artifacts: RenderedArtifact[]; sourcePath: 'local' | 'storage' }>`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1093,8 +1292,18 @@ describe('render-preview', () => {
     command_id: 'c1',
     type: 'render-preview' as const,
     session_id: 's1',
-    payload: { prefix: 'sessions/2026/09/07/s1', audioSourceRef: 'usb2' },
+    payload: {
+      prefix: 'sessions/2026/09/07/s1',
+      audioSourceRefs: ['jabra', 'usb1', 'usb2'],
+    },
   };
+
+  const artifacts = [
+    { kind: 'video', sourceRef: null, objectKey: 'p/preview/proxy.mp4', bytes: 529020, durationMs: 87837 },
+    { kind: 'audio', sourceRef: 'jabra', objectKey: 'p/preview/audio-jabra.m4a', bytes: 23487, durationMs: 87830, meanDb: -91, maxDb: -91 },
+    { kind: 'audio', sourceRef: 'usb1', objectKey: 'p/preview/audio-usb1.m4a', bytes: 24087, durationMs: 87884, meanDb: -91, maxDb: -91 },
+    { kind: 'audio', sourceRef: 'usb2', objectKey: 'p/preview/audio-usb2.m4a', bytes: 282122, durationMs: 87883, meanDb: -57.2, maxDb: -20.3 },
+  ];
 
   it('refuses to render while a recording is running', async () => {
     // A recording is unrepeatable; a render is always repeatable. When they
@@ -1112,21 +1321,34 @@ describe('render-preview', () => {
     );
   });
 
-  it('renders and reports which source path it read from', async () => {
+  it('renders every audio source, not only the loudest', async () => {
+    // The owner uses different headsets across sessions, so which source
+    // carried signal varies. Rendering one would leave the right microphone
+    // unreachable, and it would fail silently -- a preview that plays some
+    // audio looks like it is working.
     const deps = makeDeps({ isRunning: () => false });
-    deps.capture.renderPreview.mockResolvedValue({
-      objectKey: 'sessions/2026/09/07/s1/preview/proxy-usb2.mp4',
-      bytes: 1290771,
-      durationMs: 87898,
-      sourcePath: 'local',
-    });
+    deps.capture.renderPreview.mockResolvedValue({ artifacts, sourcePath: 'local' });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command);
+
+    expect(deps.capture.renderPreview).toHaveBeenCalledWith(
+      's1', 'sessions/2026/09/07/s1', ['jabra', 'usb1', 'usb2'],
+    );
+    const posted = deps.api.post.mock.calls.at(-1)[1];
+    expect(posted.artifacts.filter((a: { kind: string }) => a.kind === 'audio')).toHaveLength(3);
+  });
+
+  it('reports which source path it read from', async () => {
+    const deps = makeDeps({ isRunning: () => false });
+    deps.capture.renderPreview.mockResolvedValue({ artifacts, sourcePath: 'storage' });
     const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
 
     await agent.handle(command);
 
     expect(deps.api.post).toHaveBeenCalledWith(
       '/api/sessions/s1/preview-complete',
-      expect.objectContaining({ state: 'ready', source_path: 'local' }),
+      expect.objectContaining({ state: 'ready', source_path: 'storage' }),
     );
   });
 
@@ -1158,15 +1380,20 @@ Add to `agent/src/agent.ts`:
 
 ```typescript
   /**
-   * Renders a preview proxy.
+   * Renders the preview set: a silent video proxy plus one audio proxy per
+   * capture source.
    *
    * Never runs while capture is live. A recording cannot be repeated and a
    * render always can, so on contention the render defers -- and the API is
    * told, so the operator sees "waiting for the recording to finish" instead
    * of a request that vanished.
    *
-   * Strictly read-only on session media: it writes one new object and has no
-   * delete path anywhere.
+   * Every audio source is rendered, not just the loudest: the owner uses
+   * different headsets across sessions, so picking one would sometimes strand
+   * the microphone that actually captured the commentary.
+   *
+   * Strictly read-only on session media: it writes only new objects under
+   * preview/ and has no delete path anywhere.
    */
   private async renderPreview(command: Command): Promise<void> {
     if (this.deps.capture.isRunning()) {
@@ -1187,17 +1414,17 @@ Add to `agent/src/agent.ts`:
       const result = await this.deps.capture.renderPreview(
         command.session_id,
         prefix,
-        command.payload.audioSourceRef as string | undefined,
+        (command.payload.audioSourceRefs as string[] | undefined) ?? [],
       );
       await this.reportPreview(command.session_id, {
         state: 'ready',
-        object_key: result.objectKey,
-        bytes: result.bytes,
-        duration_ms: result.durationMs,
+        artifacts: result.artifacts,
         source_path: result.sourcePath,
       });
     } catch (error) {
       // Inert failure: nothing was modified, so a retry is always safe.
+      // A partial set is a failure, never a ready preview -- objects already
+      // written stay put (nothing is deleted) and a retry overwrites them.
       await this.reportPreview(command.session_id, {
         state: 'failed',
         reason: 'render_failed',
@@ -1220,9 +1447,17 @@ Add to `agent/src/agent.ts`:
 
 Add `case 'render-preview': return this.renderPreview(command);` to the switch in `handle`, and `'render-preview'` to the `Command['type']` union.
 
-In `agent/src/main.ts`, implement `capture.renderPreview` to: locate segments locally under `config.recordingDir/<sessionId>` and **fall back to downloading from MinIO** when absent (reporting `sourcePath` accordingly); run `buildVolumedetectArgs` per audio source to measure levels; pick the source (or honour `audioSourceRef`); run `buildProxyArgs`; upload the result to `<prefix>/preview/proxy-<sourceRef>.mp4` via the existing `Uploader`; return the object key, size, duration and source path.
+In `agent/src/main.ts`, implement `capture.renderPreview` to:
 
-**The fallback exists because local files may be gone by the time someone looks at a session**, for reasons preview does not control and does not participate in. Without it, preview would fail exactly on older sessions — the case where "what is in this?" is hardest to answer from memory.
+1. Locate segments locally under `config.recordingDir/<sessionId>`, and **fall back to downloading from MinIO** when absent, reporting `sourcePath` as `'local'` or `'storage'` accordingly.
+2. Render the video proxy with `buildVideoProxyArgs` → `<prefix>/preview/proxy.mp4`.
+3. For **each** entry in `audioSourceRefs`: run `buildVolumedetectArgs` to measure its level, then `buildAudioProxyArgs` → `<prefix>/preview/audio-<slug>.m4a`. Use the same slugging as `audioObjectKey` in Task 2 so the API and agent agree on keys.
+4. Upload every produced file via the existing `Uploader`, and return one `RenderedArtifact` per object, carrying the measured `meanDb`/`maxDb` for each audio source.
+5. Report progress per output — the video proxy, then each audio source by name — so a multi-source render does not look stalled while it works through the audio.
+
+**If any audio source fails to render, the whole render fails.** A partial set must never be reported ready: the missing source is exactly the one the operator would have needed, and silently offering the rest reproduces the failure this design exists to prevent.
+
+**The local/MinIO fallback exists because local files may be gone by the time someone looks at a session**, for reasons preview does not control and does not participate in. Without it, preview would fail exactly on older sessions — the case where "what is in this?" is hardest to answer from memory. The two paths have very different waits (a four-hour session pulls ~1.6 GB over the network on the storage path), which is why `sourcePath` is reported rather than inferred.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1247,29 +1482,53 @@ git commit -m "feat(agent): render preview proxies, never while capture runs"
 - Test: `src/preview/preview.service.spec.ts`
 
 **Interfaces:**
-- Consumes: `SessionPreview`, `PreviewState`, `isLegalPreviewTransition` (Task 3).
+- Consumes: `SessionPreview`, `PreviewState`, `PreviewArtifact`, `isLegalPreviewTransition` (Task 3); `missingAudioProxies` (Task 2).
 - Produces: `PreviewService.completeRender(sessionId: string, dto: PreviewCompleteDto): Promise<void>`; route `POST /api/sessions/:id/preview-complete` carrying `@AgentRoute()` + `AgentRoleGuard`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // append to src/preview/preview.service.spec.ts
+const readyArtifacts = [
+  { kind: 'video', sourceRef: null, objectKey: 'p/preview/proxy.mp4', bytes: 529020, durationMs: 87837 },
+  { kind: 'audio', sourceRef: 'jabra', objectKey: 'p/preview/audio-jabra.m4a', bytes: 23487, durationMs: 87830 },
+  { kind: 'audio', sourceRef: 'usb1', objectKey: 'p/preview/audio-usb1.m4a', bytes: 24087, durationMs: 87884 },
+  { kind: 'audio', sourceRef: 'usb2', objectKey: 'p/preview/audio-usb2.m4a', bytes: 282122, durationMs: 87883 },
+];
+
 describe('PreviewService.completeRender', () => {
-  it('marks a rendered proxy ready and records which path it came from', async () => {
+  it('marks a complete set ready and records which path it came from', async () => {
     const { service, previews } = makeService();
-    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, audioSourceRef: 'usb2' });
+    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, artifacts: [] });
     await service.completeRender('s1', {
-      agent_id: 'a1', state: 'ready', object_key: 'k', bytes: 1290771,
-      duration_ms: 87898, source_path: 'local',
+      agent_id: 'a1', state: 'ready', artifacts: readyArtifacts, source_path: 'local',
     } as never);
     expect(previews.save).toHaveBeenCalledWith(
       expect.objectContaining({ state: PreviewState.Ready, sourcePath: 'local' }),
     );
   });
 
+  it('refuses to mark ready when an audio source has no proxy', async () => {
+    // Three sources with two proxies is an incomplete preview. The missing
+    // one is exactly the microphone the operator would have needed, and
+    // offering the other two silently is the failure this design prevents.
+    const { service, previews } = makeService();
+    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, artifacts: [] });
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'ready', source_path: 'local',
+      artifacts: readyArtifacts.filter((a) => a.sourceRef !== 'usb1'),
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: PreviewState.Failed,
+        failureReason: expect.stringContaining('usb1'),
+      }),
+    );
+  });
+
   it('records a failure reason instead of leaving the row rendering forever', async () => {
     const { service, previews } = makeService();
-    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, audioSourceRef: 'usb2' });
+    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, artifacts: [] });
     await service.completeRender('s1', {
       agent_id: 'a1', state: 'failed', reason: 'render_failed', detail: 'ffmpeg died',
     } as never);
@@ -1280,7 +1539,7 @@ describe('PreviewService.completeRender', () => {
 
   it('keeps a deferred render pending so the operator can retry after recording', async () => {
     const { service, previews } = makeService();
-    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, audioSourceRef: 'usb2' });
+    previews.findOne.mockResolvedValue({ state: PreviewState.Rendering, artifacts: [] });
     await service.completeRender('s1', {
       agent_id: 'a1', state: 'deferred', reason: 'capture_running',
     } as never);
@@ -1291,6 +1550,10 @@ describe('PreviewService.completeRender', () => {
 });
 ```
 
+The `makeService` helper's `manifests.find` mock must be extended for these
+cases to return the three audio tracks (`jabra`, `usb1`, `usb2`), since
+completeness is checked against the manifest's audio track list.
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx jest src/preview/preview.service.spec.ts`
@@ -1298,7 +1561,9 @@ Expected: FAIL — `service.completeRender is not a function`
 
 - [ ] **Step 3: Implement the DTO, the service method and the route**
 
-The DTO validates `agent_id` (UUID), `state` (`IsIn(['ready','failed','deferred'])`), and optional `object_key`, `bytes`, `duration_ms`, `source_path`, `reason`, `detail`.
+The DTO validates `agent_id` (UUID), `state` (`IsIn(['ready','failed','deferred'])`), an optional nested-validated `artifacts` array (`kind` in `['video','audio']`, `source_ref`, `object_key`, `bytes`, `duration_ms`, optional `mean_db`/`max_db`), and optional `source_path`, `reason`, `detail`.
+
+`completeRender` must **verify completeness before accepting `ready`**: use `missingAudioProxies` against the manifest's audio track list, and if anything is missing, save `failed` with a reason naming the absent sources rather than `ready`. An agent claiming success is not evidence — the same principle `ManifestService.completeUpload` already applies to uploads, where `dto.verified` is deliberately not trusted.
 
 The route goes on `SessionsController` beside the other machine routes, carrying `@AgentRoute()` and `@UseGuards(AgentRoleGuard)` — it is the agent reporting back, so it belongs in the machine lane, unlike every other preview route.
 
@@ -1324,30 +1589,31 @@ git commit -m "feat(preview): accept the agent's render-complete callback"
 - Modify: `public/style.css` — timeline, sources panel, render-progress styles
 
 **Interfaces:**
-- Consumes: `GET/POST /api/sessions/:id/preview`, `GET /api/sessions/:id/preview/media`, `GET /api/sessions/:id/timeline` (Tasks 5, 6).
+- Consumes: `GET/POST /api/sessions/:id/preview`, `GET /api/sessions/:id/preview/media`, `GET /api/sessions/:id/preview/audio/:sourceRef`, `GET /api/sessions/:id/timeline` (Tasks 5, 6).
 - Produces: `openPreview(sessionId)` in `app.js`, reachable from a sessions-list row.
 
 - [ ] **Step 1: Add the markup**
 
-Add to `public/index.html` a `<section id="screen-preview" hidden>` containing: a `<video id="preview-video" controls preload="metadata">`, a `<div id="preview-render-note">`, a `<div id="preview-sources">`, a `<canvas id="preview-timeline">`, a `<div id="preview-legend">`, and a `<p id="preview-activity-note">`.
+Add to `public/index.html` a `<section id="screen-preview" hidden>` containing: a `<video id="preview-video" controls preload="metadata">`, a `<div id="preview-audio-elements">` (one `<audio preload="metadata">` per source, created at runtime), a `<div id="preview-render-note">`, a `<div id="preview-sources">`, a `<canvas id="preview-timeline">`, a `<div id="preview-legend">`, and a `<p id="preview-activity-note">`.
 
-Note: the `<video>` must **not** carry a `crossorigin` attribute — adding one would require bucket CORS that is deliberately not configured.
+Note: neither the `<video>` nor any `<audio>` element may carry a `crossorigin` attribute — adding one would require bucket CORS that is deliberately not configured.
 
 - [ ] **Step 2: Implement the preview screen in `app.js`**
 
 Requirements:
 - `openPreview(sessionId)` fetches status and timeline in parallel; the **timeline renders immediately without waiting for the proxy**, because it comes from a text file that needs no rendering. Making the operator wait ~7 minutes to see which windows they were in would be an artificial delay.
-- If the status is not `ready`, POST to request a render and poll status, showing the path-specific wait: `'Rendering from local files — about 7 minutes'` for `local`, `'Fetching 1.6 GB from storage, then rendering — about 20 minutes'` for `storage`. A silent thirty-times-longer render reads as a hang.
+- If the status is not `ready`, POST to request a render and poll status, showing the path-specific wait: `'Rendering from local files — about 7 minutes'` for `local`, `'Fetching 1.6 GB from storage, then rendering — about 20 minutes'` for `storage`. A silent thirty-times-longer render reads as a hang. The render request takes **no** source argument — one render produces every source.
 - If the status is `deferred`/`pending` with `capture_running`, show `'Waiting for the current recording to finish.'`
-- The sources panel lists every audio source with its measured level, marks the selected one with its reason verbatim from the API, and labels a silent source as `'digital silence — this device was probably not the active input'`. It must **not** imply a silent track is defective; add the note that all offered sources were reported available by the agent, which is correct behaviour.
-- Clicking a non-selected source POSTs a render for it and polls; the first proxy is kept.
-- The timeline canvas draws two lanes: window focus (top-8 colours plus one neutral "other") and mouse movement density. Clicking anywhere seeks `preview-video` to that offset.
+- **Audio playback**: create one `<audio>` element per source, each pointing at `/api/sessions/:id/preview/audio/:sourceRef`. The video proxy is silent, so exactly one audio element is unmuted and playing at a time; the rest stay paused. Keep them in sync by setting `audio.currentTime = video.currentTime` on `play`, `seeked`, `ratechange` and on every source switch, and correcting whenever `Math.abs(audio.currentTime - video.currentTime) > 0.3`. The real tracks differ in length by tens of milliseconds (87.830s / 87.883s / 87.884s against 87.867s of video), so drift is real and accumulates.
+- **Switching source must never reload or reposition the video** — swap which audio element plays and seek only that element. This is the whole reason audio is separate files, so verify it by switching mid-playback and confirming the video does not stall or restart.
+- The sources panel lists every audio source with its measured level, marks the playing one with its reason verbatim from the API, and labels a silent source as `'digital silence — this device was probably not the active input'`. It must **not** imply a silent track is defective; add the note that all offered sources were reported available by the agent, which is correct behaviour. Every source is selectable, including the silent ones — that is how the operator confirms which microphone actually worked.
+- The timeline canvas draws two lanes: window focus (top-8 colours plus one neutral "other") and mouse movement density. Clicking anywhere seeks `preview-video` to that offset, and the active audio element follows.
 - `preview-activity-note` reads exactly: `'Keystroke and click density not captured — see the tracker defect in TASKS.md.'` Draw **no** keys/clicks lane, no zero bar, no flat line.
 - Add a "Preview" control to each `stored` row in `loadSessions()`.
 
 - [ ] **Step 3: Verify by hand against the deployed service**
 
-Open `https://screencast.alfares.cz/console`, preview session `d5b209c3-d822-4d22-840b-b05f9b1384b5`, and confirm: the timeline appears before the video is ready; the focus lane shows the six real windows; the sources panel shows two sources at -91.0 dB labelled as digital silence and one at -20.3 dB peak marked selected; the video plays with audio; seeking to a late offset works; and no keys/clicks lane is drawn.
+Open `https://screencast.alfares.cz/console`, preview session `d5b209c3-d822-4d22-840b-b05f9b1384b5`, and confirm: the timeline appears before the video is ready; the focus lane shows the six real windows; the sources panel lists **all three** audio sources, two labelled digital silence at -91.0 dB and one at -20.3 dB peak marked as playing; the video plays with audio from that source; **switching to a silent source keeps the video playing without reload** and produces silence rather than an error; seeking to a late offset works and the audio follows; and no keys/clicks lane is drawn.
 
 - [ ] **Step 4: Commit**
 
@@ -1369,13 +1635,17 @@ Expected: typecheck, build and jest all pass; suite count above the 174/23 basel
 
 - [ ] **Step 2: Verify CORS and Range empirically**
 
-Fetch a presigned URL from `GET /api/sessions/:id/preview/media`, then confirm the object answers `Accept-Ranges: bytes` and returns `206 Partial Content` for `Range: bytes=0-102399`. Confirm the `<video>` element plays and seeks in a real browser.
+Fetch a presigned URL from `GET /api/sessions/:id/preview/media`, then confirm the object answers `Accept-Ranges: bytes` and returns `206 Partial Content` for `Range: bytes=0-102399`. Do the same for one `GET /api/sessions/:id/preview/audio/:sourceRef`. Confirm the `<video>` and `<audio>` elements play and seek in a real browser.
 
 **If bucket CORS configuration turns out to be genuinely required, STOP and raise it. Do not configure the bucket.**
 
-- [ ] **Step 3: Record a fresh session and preview it end to end**
+- [ ] **Step 3: Verify every audio source is reachable and correct**
 
-Record a short session through the console, save it, then preview it. Confirm the proxy renders, the timeline matches what was actually done, and the window titles are the real ones.
+For the reference session, confirm all three audio proxies exist in MinIO, that each plays from the console, and that the one carrying signal is audible while the two silent ones are genuinely silent rather than erroring. Then confirm the completeness rule by inspecting a preview whose artifact set is short a source — it must read `failed` with the missing source named, never `ready`.
+
+- [ ] **Step 4: Record a fresh session and preview it end to end**
+
+Record a short session through the console, save it, then preview it. Confirm the video proxy and every audio proxy render, the timeline matches what was actually done, and the window titles are the real ones.
 
 - [ ] **Step 4: Verify the contention rule live**
 
@@ -1383,7 +1653,7 @@ Start a recording, request a preview render of an *older* stored session while i
 
 - [ ] **Step 5: Confirm nothing was deleted**
 
-Verify local session directories and all MinIO objects are intact, and that the only new object is `preview/proxy-<source>.mp4`.
+Verify local session directories and all MinIO objects are intact, and that the only new objects are `preview/proxy.mp4` and one `preview/audio-<slug>.m4a` per source.
 
 - [ ] **Step 6: Verify the deploy by pod image and age**
 
@@ -1410,9 +1680,9 @@ git commit -m "docs: record session preview validation evidence"
 
 ## Self-Review
 
-**Spec coverage.** Agent-side rendering with the three containments → Tasks 7, 8. Local-then-MinIO fallback with its reasoning → Task 8. Audio selection with override and the sources panel → Tasks 2, 5, 10. Three-lane timeline with keys/clicks omitted → Tasks 1, 5, 10. Top-8 title palette → Tasks 1, 10. Server-side bucketing → Tasks 1, 5. Sanitiser boundary test → Task 5. Render lifecycle and two distinguishable waits → Tasks 3, 8, 9, 10. New screen with stable URL and operator-lane routes → Tasks 6, 10. Presigning without new permissions, CORS verified not assumed → Tasks 4, 11. Corrected figures → carried in Task 8's comment and the spec. No deletion anywhere.
+**Spec coverage.** Agent-side rendering with the three containments → Tasks 7, 8. Local-then-MinIO fallback with its reasoning → Task 8. Every audio source reachable, separate files, 24 kbps → Tasks 2, 7, 8, 10. Levels panel with silence labelled and every source selectable → Tasks 2, 5, 10. Completeness enforced, never a partial ready → Tasks 2, 8, 9, 11. Sync without video reload → Task 10. Three-lane timeline with keys/clicks omitted → Tasks 1, 5, 10. Top-8 title palette → Tasks 1, 10. Server-side bucketing → Tasks 1, 5. Sanitiser boundary test → Task 5. Render lifecycle and two distinguishable waits → Tasks 3, 8, 9, 10. New screen with stable URL and operator-lane routes → Tasks 6, 10. Presigning without new permissions, CORS verified not assumed → Tasks 4, 11. Corrected figures → the spec's table and Task 7's comment. No deletion anywhere.
 
-**Type consistency.** `PreviewState` and `isLegalPreviewTransition` (Task 3) are used identically in Tasks 5 and 9. `AudioSourceView`/`AudioSourceLevel` (Task 2) flow into `PreviewStatus` (Task 5) and the panel (Task 10). `Timeline`/`TimelineBucket`/`FocusInterval` (Task 1) are consumed unchanged by Tasks 5 and 10. `renderPreview`'s return shape (Task 8) matches the `preview-complete` DTO fields (Task 9) and the entity columns (Task 3): `objectKey`/`object_key`, `bytes`, `durationMs`/`duration_ms`, `sourcePath`/`source_path`.
+**Type consistency.** `PreviewState`, `PreviewArtifact` and `isLegalPreviewTransition` (Task 3) are used identically in Tasks 5 and 9. `AudioSourceView`/`AudioSourceLevel`, `audioObjectKey` and `missingAudioProxies` (Task 2) flow into `PreviewStatus` and completeness checking (Tasks 5, 9) and the panel (Task 10). `Timeline`/`TimelineBucket`/`FocusInterval` (Task 1) are consumed unchanged by Tasks 5 and 10. `renderPreview`'s return shape (Task 8) — `{ artifacts: RenderedArtifact[]; sourcePath }` — matches the `preview-complete` DTO's `artifacts`/`source_path` (Task 9) and the entity's `artifacts` jsonb (Task 3), field for field: `kind`, `sourceRef`/`source_ref`, `objectKey`/`object_key`, `bytes`, `durationMs`/`duration_ms`. The agent's slugging (Task 8, step 3) is specified to match `audioObjectKey` (Task 2) so both sides derive identical keys.
 
 **Placeholder scan.** No TBDs. Task 5's and Task 10's implementation steps state requirements rather than full listings — deliberate, because the service wiring and the canvas drawing are long and mechanical, and every type, route, literal string and behavioural rule they must satisfy is given exactly. The tests that gate them are written out in full.
 

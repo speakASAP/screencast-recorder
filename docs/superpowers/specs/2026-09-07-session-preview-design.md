@@ -53,13 +53,22 @@ plus its audio, on this host's VAAPI encoder: **2.7s wall, 1.29 MB output**,
 
 | Quantity | Prompt said | Measured / extrapolated |
 |---|---|---|
-| Proxy, 88s | 0.6 MB | **1.29 MB** |
-| Proxy, 4 hours | ~100 MB | **~211 MB** |
+| Muxed video+audio proxy, 88s | 0.6 MB | **1.29 MB** |
+| **Video-only proxy, 4 hours** | ~100 MB | **~86.7 MB** |
+| **Audio proxies (3 sources, 24 kbps), 4 hours** | — | **~54.0 MB** |
+| **Preview total, 4 hours** | — | **~140.7 MB** |
 | Source, 4 hours | ~6 GB | **~1.6 GB** |
 
 The prompt's 0.6 MB was measured against the Jabra source, which turned out to
-be digital silence. The 1.29 MB figure is against the source that actually
-carried audio.
+be digital silence; 1.29 MB is against the source that actually carried audio.
+
+Both of those were single muxed files, and the shipped shape splits video from
+audio (see "Audio: every source reachable"). Splitting turns out to be
+**cheaper, not more expensive**: a video-only proxy is 529 020 bytes for 88s,
+extrapolating to ~86.7 MB for four hours, and three 24 kbps audio proxies add
+~54.0 MB — **~140.7 MB in total against ~211 MB for the muxed single-source
+file**. Carrying every audio source therefore costs less than carrying one, and
+the ~211 MB figure applies to a shape that is no longer built.
 
 **Range requests work.** MinIO returns `Accept-Ranges: bytes` and answers a
 Range request with `206 Partial Content`. A faststart proxy plus a plain
@@ -141,9 +150,9 @@ all mandatory:
    loses, and that priority must be visible in the implementation rather than
    left to timing.
 2. **Strictly read-only on session media.** The render reads segments and
-   writes exactly one new object per audio source (`preview/proxy-<source>.mp4`).
-   It has no delete path, matching the discipline already established in
-   `Uploader`.
+   writes only new objects under `preview/` — one `proxy.mp4` and one
+   `audio-<source-ref>.m4a` per audio source. It has no delete path, matching
+   the discipline already established in `Uploader`.
 3. **Failure is inert.** A failed render reports failure and leaves everything
    untouched. The operator sees "render failed" and can retry. It cannot
    corrupt or lose footage because it never writes into the session directory.
@@ -166,37 +175,97 @@ is acceptable but not free, and **the operator must be told which path is
 running** — a silent thirty-times-longer render reads as a hang. See
 "Progress reporting" below.
 
-## Audio source selection
+## Audio: every source reachable
 
-The proxy carries **one audio stream**, chosen automatically as the source with
-the highest measured level, with a **manual override**.
+**Every audio source gets its own proxy file.** The video proxy carries no
+audio at all; audio is rendered as one separate `.m4a` per source, and the
+console switches between them.
 
-Rejected alternatives: muxing all three streams costs little (3.0s vs 2.7s,
-1.44 MB vs 1.29 MB) but browsers play only the first audio track in a `<video>`
-element and expose no track switcher, so the extra streams are unreachable.
-One proxy per audio track multiplies render time and presigned URLs for a case
-that has never occurred.
+The owner uses different headsets across sessions, so which source carried
+signal varies from recording to recording. Auto-selecting a single track would
+therefore sometimes render the wrong one and give the operator no way to reach
+the right one — the failure would be silent, since a preview that plays *some*
+audio looks like it is working.
 
-**Selection** is one `volumedetect` pass per source (sub-second on 88s of
-audio), deterministic and re-derivable.
+### Why separate files rather than muxed streams
 
-**The override is part of this work, not a future mitigation.** "Loudest wins"
-agreed with the system default here, which is a reasonable prior — but this
-owner's stated purpose for the Jabra is voice commentary over a screencast, so
-the case where the heuristic picks wrong (a quiet, correct microphone alongside
-a louder ambient source) is the *intended* use, not an exotic edge. If the
-operator picks a different source, the proxy is re-rendered for that source and
-cached alongside the default one. A re-render costs ~3 seconds per 88 seconds
-of input, so a wrong automatic pick costs a click rather than a misleading
-preview.
+A browser plays only the **first** audio track of a `<video>` element and Chrome
+exposes no track switcher. Muxing three streams into the proxy would leave two
+permanently unreachable, so carrying all three requires changing the shape, not
+just the count:
+
+- **Video proxy**: `preview/proxy.mp4`, video only, no audio stream.
+- **Audio proxies**: `preview/audio-<source-ref>.m4a`, one per source.
+
+The console plays the video muted-of-nothing (it has no audio track) alongside
+one `<audio>` element per source, keeping the selected one unmuted and the rest
+paused. Switching source swaps which element plays and seeks it to the video's
+`currentTime`; **the video never reloads**, so switching is instant and does not
+cost the buffered position.
+
+Sync is maintained by seeking the audio element to the video's `currentTime` on
+every play, seek and source switch, and correcting when drift exceeds a
+threshold. This is necessary because the tracks genuinely differ in length:
+measured on the real session, the three sources ran 87.830s, 87.883s and
+87.884s against 87.867s of video — tens of milliseconds apart, which accumulates
+if left uncorrected.
+
+### Bitrate
+
+**24 kbps mono at 22.05 kHz**, and faststart, verified to put `moov` at byte 28.
+
+Speech stays intelligible at that rate, and intelligibility is the whole
+requirement: this is a preview for judging what was captured, not a listening
+copy. At 64 kbps three tracks would come to ~346 MB for four hours against an
+86.7 MB video proxy — the audio would outweigh the video four to one, which is
+out of proportion for a preview.
+
+Measured at 24 kbps on the real session, per four-hour extrapolation:
+
+| Source | Signal | 4h size |
+|---|---|---|
+| `Generic_USB_Audio ... Audio_2` | -20.3 dB peak | 46.2 MB |
+| `Jabra_Link_390` | digital silence | 3.8 MB |
+| `Generic_USB_Audio ... Audio_1` | digital silence | 3.9 MB |
+| **Three tracks total** | | **54.0 MB** |
+
+Two things fall out of that, both measured rather than estimated. AAC compresses
+a digitally silent track to almost nothing — 3.8 MB against 46.2 MB for four
+hours — so **the sources that carried no signal are nearly free to keep**, and
+keeping them is what makes "which microphone actually worked?" answerable by
+listening rather than only by reading a number.
+
+And the whole split shape is **cheaper than the muxed one it replaces**:
+~140.7 MB total against ~211 MB. Carrying all three sources costs less than
+carrying one did, because dropping the audio stream from the video proxy saves
+more than three low-bitrate audio files add.
+
+### Level measurement and selection
+
+**Levels are still measured per source** — one `volumedetect` pass each,
+sub-second on 88s of audio — and the loudest source is the one **initially
+selected for listening**. What changed is that selection now picks which of
+several available tracks to listen to, rather than which single one gets
+rendered at all. A wrong initial pick costs one click, not a re-render, and no
+source is ever unreachable.
 
 **The sources panel** lists every audio source with its measured level,
-including the silent ones, and states which was used and why — in those terms:
-"selected automatically: highest measured level". The mechanism is visible
-rather than mysterious. A source at -91.0 dB is labelled as digital silence,
-not as a quiet room: it usually means the device was not the active input,
-which is actionable information for the next recording. The panel must not
-imply the silent tracks are defective.
+including the silent ones, and states which is playing and why — in those
+terms: "selected automatically: highest measured level", or "selected by the
+operator". The mechanism is visible rather than mysterious. A source at
+-91.0 dB is labelled as digital silence, not as a quiet room: it usually means
+the device was not the active input, which is actionable information for the
+next recording. The panel must not imply the silent tracks are defective — they
+recorded correctly and there was no signal, and the console offered all three
+because the agent correctly reported all three as available.
+
+### Completeness
+
+A preview is **not** `ready` until the video proxy and **every** audio proxy
+exist. A session with three audio sources and two audio proxies is incomplete
+and must be visible as such rather than passing: a missing source is exactly the
+one the operator would have needed, and silently offering two of three would
+reproduce the failure this design exists to prevent.
 
 ## The activity timeline
 
@@ -276,14 +345,21 @@ worse consequences.
 
 ## Render lifecycle
 
-State on a new `session_preview` row, one per session per audio source:
+**One `session_preview` row per session**, not per audio source — a render
+produces the whole set (video proxy plus every audio proxy) as one unit, and a
+partial set is not a usable preview:
 
 ```text
 pending → rendering → ready | failed
 ```
 
-The operator opens preview. If no proxy exists for the chosen source, the API
-queues a `render-preview` command and returns `rendering`.
+The row carries an `artifacts` list naming each rendered object and its kind, so
+completeness is checkable rather than assumed. `ready` requires the video proxy
+**and** one audio proxy per audio track in the manifest.
+
+The operator opens preview. If no preview exists, the API queues a
+`render-preview` command and returns `rendering`. Because the render produces
+every audio source at once, switching source later needs **no** new render.
 
 **The timeline is never gated on the render, deliberately.** It comes from
 `events.jsonl`, which needs no rendering, so it is shown immediately while the
@@ -297,8 +373,14 @@ progress-report channel — no new transport:
 - local: *"Rendering from local files — about 7 minutes"*
 - MinIO: *"Fetching 1.6 GB from storage, then rendering — about 20 minutes"*
 
+Because a render now produces several outputs, progress also reports **which
+output is being produced** — the video proxy, then each audio source by name —
+so a multi-source render does not look stalled while it works through the audio.
+
 **Failure** is explicit: state `failed` with a reason, a retry control, and
-nothing deleted.
+nothing deleted. A render that produced some outputs but not all is `failed`,
+never `ready`: the already-written objects stay (nothing is deleted) and a retry
+overwrites them.
 
 ## Placement and routes
 
@@ -313,10 +395,15 @@ All preview routes are the **operator lane**: no `@AgentRoute()`, no
 
 | Route | Purpose |
 |---|---|
-| `GET /api/sessions/:id/preview` | status; audio sources with measured levels; which was selected and why |
-| `POST /api/sessions/:id/preview` | request a render for a chosen source |
-| `GET /api/sessions/:id/preview/media` | presigned GET, short expiry, redirect |
+| `GET /api/sessions/:id/preview` | status; audio sources with measured levels; which is initially selected and why |
+| `POST /api/sessions/:id/preview` | request the render (video proxy + every audio proxy) |
+| `GET /api/sessions/:id/preview/media` | presigned GET for the video proxy; redirect |
+| `GET /api/sessions/:id/preview/audio/:sourceRef` | presigned GET for one audio proxy; redirect |
 | `GET /api/sessions/:id/timeline` | bucketed activity JSON |
+
+`POST` takes no source parameter: one render produces every source. The audio
+route is per source because each is a separate object, and the console holds one
+presigned URL per source so switching never reloads the video.
 
 The agent-lane addition is the `render-preview` command type, delivered through
 the existing long-poll channel. No change to the agent's authentication or to
@@ -358,8 +445,12 @@ distinguishable:
   survive into the timeline endpoint's response.
 - Keys/clicks are absent from the response shape entirely — asserted, so a
   future change cannot reintroduce them as zeroes.
-- Audio selection: highest measured level wins; override re-renders and caches
-  per source.
+- Audio selection: the highest measured level is the one initially selected;
+  every source remains reachable, and switching source triggers no new render.
+- **Completeness**: a preview missing any audio proxy is not `ready`. A session
+  with three audio sources and two audio proxies must fail verification rather
+  than pass — asserted directly, because silently offering two of three is the
+  failure mode this design exists to prevent.
 - Contention: a render requested while capture is running is refused or
   deferred, never concurrent.
 - Route lane: preview routes carry neither `@AgentRoute()` nor `@Public()`.
