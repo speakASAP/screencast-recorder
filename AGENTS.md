@@ -76,8 +76,11 @@ and the next concrete action.
   MinIO root credentials are used only for one-time provisioning.
 - Never print, log, commit or paste a secret value. Key names only.
 - Recording sessions can be hours long and are not reproducible. Never delete
-  local session media that has not been both uploaded, verified in S3, and
-  previewed by the operator.
+  local session media. Deletion happens on exactly two paths, both owner-driven:
+  the operator previews a session, judges it unusable and explicitly asks for it
+  to be deleted; or the session is published and a real YouTube link exists, at
+  which point the sources are replaced by that link and the final video.
+  Previewing a session is not itself permission to delete it.
 - Auto-deploy is disabled for this repository while it has no application code
   (see `shared/scripts/deploy-queue/registry.sh`). A commit that fails deploy
   preflight leaves the shared worker unit FAILED and blocks the queue for every

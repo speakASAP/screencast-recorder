@@ -197,10 +197,22 @@ Served by the API behind Auth. Four screens:
   will not start; the agent surfaces "controller unavailable" instead of
   silently recording into a void.
 
-**Local retention:** files are deleted only after every object is verified
-present in S3 *and* the operator has previewed the stored session. A
-four-hour session cannot be re-recorded; one extra day of local disk is the
-cheaper side of that trade. Phase 1 never deletes automatically.
+**Local retention.** Phase 1 never deletes anything automatically.
+
+Raw footage is deleted on exactly two paths, and preview is not a
+deletion trigger on either of them.
+
+**The session was no good.** The operator previews it, marks it unusable, and
+asks for the whole session to be deleted. Deletion is that explicit request,
+never a consequence of having looked.
+
+**The session was published.** The full chain completes -- edit, preview,
+approval, YouTube publication -- and only once a real YouTube link exists are
+the sources replaced by that link and the final video. Nothing is deleted while
+the material is still needed to produce the video.
+
+Preview exists so the operator can see what was recorded. That is all it does.
+It informs the first path and precedes the second, but it authorises neither.
 
 ## Orchestration
 

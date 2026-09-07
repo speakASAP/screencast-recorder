@@ -19,7 +19,10 @@
 - Credentials come from Vault by AppRole (`role_id` in config, response-wrapped `secret_id` at enrollment). Never a static token file, never a self-signed token.
 - **Never record keystroke content.** Counts and modifier names only. There is no configuration flag that changes this.
 - Stop with `SIGINT`, never `SIGKILL` — `SIGKILL` leaves an unfinalized MP4 and loses the last segment.
-- Never delete local media that has not been uploaded, verified, and previewed by the operator. Phase 1 deletes nothing automatically.
+- Never delete local media. Phase 1 deletes nothing automatically. Deletion is
+  only ever an explicit operator request for a session judged unusable, or the
+  final step after publication once a real YouTube link exists. Previewing a
+  session does not authorise deleting it.
 - Keep recording through an API outage. The API is a controller, not a dependency.
 
 ---

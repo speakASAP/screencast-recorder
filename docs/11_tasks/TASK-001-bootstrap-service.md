@@ -61,8 +61,8 @@ Preserves. The invariants this task must not violate:
 - no raw keystroke or clipboard content is ever captured or stored;
 - MinIO root credentials are never used at runtime;
 - no secret value enters Git, documentation, logs or terminal output;
-- local session media is never deleted before it is uploaded, verified in S3,
-  and previewed by the operator;
+- local session media is never deleted except on explicit operator request for
+  an unusable session, or after publication once a YouTube link exists;
 - `/srv/speakasap-records/speakasap-records/` is never touched;
 - service-to-service authentication follows the canonical service identity
   standard without exception.
