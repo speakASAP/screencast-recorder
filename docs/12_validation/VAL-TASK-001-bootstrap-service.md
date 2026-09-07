@@ -14,18 +14,21 @@ parallel_workstream_context: final-integration
 
 ## Summary
 
-The control plane and the host agent are implemented and verified against live
-systems rather than mocks. 126 tests pass (43 API across 8 suites, 83 agent
-across 9). The system records: a real 4K VAAPI capture of this host produced
-playable segments that concatenate losslessly, and the scoped storage
-credential uploaded and verified them in the production MinIO bucket while
-remaining denied on every other bucket.
+The control plane is deployed at `screencast.alfares.cz`, the host agent runs
+as a systemd user service on `alfares`, and the whole pipeline has been driven
+end to end against the real system rather than against mocks. 144 tests pass
+across 19 suites.
 
-Pre-deployment validation is complete. The end-to-end operator run — a session
-started from the console, the API killed mid-recording, and Save versus
-Discard — is recorded under "Issues and validation debt" as the one item that
-cannot be evidenced before the service is deployed, since the agent has nothing
-to enrol with until then.
+A session started through the API recorded this host's 4K display and Jabra
+microphone as independent segmented tracks, survived the API being scaled to
+zero replicas for 45 seconds mid-recording without losing footage, stopped
+gracefully with a playable final segment, and reached `stored` only after the
+API independently read every object back from MinIO. A second session was
+discarded and uploaded nothing.
+
+That run found five defects no unit test had caught, each now fixed and pinned
+by a regression test; they are listed under "End-to-end evidence" because how
+they were found matters as much as that they were fixed.
 
 ## Upstream goal
 
@@ -42,7 +45,7 @@ implements `BUSINESS.md` *Goals* 1-8 and the *Phase 1 outcome* of
 | Segments are playable, including the final short one | Pass | `ffprobe` read every segment; a 10s capture yielded 8.00s + 2.00s video segments and four audio segments, all with valid durations |
 | Segments concatenate without re-encoding | Pass | `ffmpeg -f concat -c copy` over the sorted segment list produced exactly `10.000000`s |
 | Start is refused unless clock and disk pass | Pass | Unit-covered: `clock_unsynchronised` and `disk_below_threshold` both refuse to report ready; `t0_missed` refuses to start late |
-| Capture survives an unreachable controller | Pass (unit) | Agent keeps recording, queues reports, flushes on reconnect, re-reads the token once on 401. Runtime rehearsal pending - see validation debt |
+| Capture survives an unreachable controller | Pass (live) | API scaled to 0 replicas for 45s mid-recording: all three ffmpeg processes stayed alive and segments grew from 2 to 4. No footage lost |
 | Save marks stored only after readback | Pass | `ManifestService.completeUpload` derives expected keys from the stored manifest and refuses to store on any gap; unit-covered, and readback proven live |
 | Discard uploads nothing | Pass | State machine forbids `review -> uploading` without an explicit Save; `recording -> uploading` and `stopping -> stored` both rejected |
 | Scoped credential denied on `speakasap-records` | Pass | Via `mc`: `DENIED_AS_EXPECTED`. Via the AWS SDK the service itself uses: `AccessDenied` |
@@ -56,7 +59,7 @@ implements `BUSINESS.md` *Goals* 1-8 and the *Phase 1 outcome* of
 | --- | --- | --- | --- |
 | Adoption | `python3 ../intent-preservation-system/scripts/validate_adoption_profile.py --root . --phase planning` | Pass | "IPS adoption profile valid for planning: screencast-recorder (16 capabilities reviewed)" |
 | Pre-coding | `python3 ../intent-preservation-system/scripts/pre_coding_gate.py --root .` | Pass | "PASS pre_coding_gate report=reports/validation/ips-pre-coding-gate.json" |
-| Application | `npm run typecheck && npm run test:unit` (both packages) | Pass | API 43 tests / 8 suites; agent 83 tests / 9 suites |
+| Application | `npm run typecheck && npx jest` | Pass | 144 tests across 19 suites, both packages |
 | Integration | Live auth, Postgres, Vault and MinIO checks (below) | Pass | See "Integration evidence" |
 | Deployment dry run | `../shared/scripts/deploy.sh screencast-recorder --dry-run` | Pass on re-run | The first run failed on this document's own placeholders, which is the gate working as designed; re-run after completion |
 
@@ -105,17 +108,58 @@ over the same media reproduces the same ranges.
 Capture itself is not reproducible, which is why local media is never deleted
 before verification and operator preview.
 
+## End-to-end evidence (2026-09-07)
+
+The system was deployed to `screencast.alfares.cz`, the agent installed as a
+systemd user service, and the whole pipeline driven against it.
+
+| Step | Observed |
+| --- | --- |
+| Enrolment | Agent enrolled and reported real capabilities; the console showed it online with HDMI-A-0 at 3840x2160, the Jabra, and the webcam unavailable |
+| Start barrier | `preparing -> recording`, T0 set, clock offset recorded |
+| Capture | Three ffmpeg processes; screen, audio and `events.jsonl` written to disk |
+| Controller outage | API scaled to 0 for 45s: capture continued, segments grew 2 -> 4 |
+| Stop | `recording -> review`; final short segment playable under ffprobe; manifest written locally and posted |
+| Save | `review -> uploading -> stored`; agent logged `uploaded 4 objects (1624518 bytes), verified=true` |
+| Storage layout | `<prefix>/alfares/{screen-HDMI-A-0,audio-...,metadata}/` with `manifest.json` at the session root |
+| Discard | Reached `discarded` and uploaded nothing; only saved sessions had objects |
+| Storage boundary | Scoped credential still denied on `speakasap-records`; that data untouched |
+
+Four defects were found by this run that no unit test had caught, each fixed
+with a regression test:
+
+1. **Display offsets were rejected by the API.** The agent reports each
+   display's position, which x11grab needs, but `DisplayDto` did not declare
+   `x`/`y` and `forbidNonWhitelisted` turned that into a 400. The agent enrolled
+   and then crash-looped.
+2. **The agent read tracks from `start`.** The contract puts them in `prepare`,
+   so the agent started zero processes and still reported "recording" -- a
+   session that looked healthy while capturing nothing.
+3. **Nothing completed a stop.** No handler acted on the agent's `stopped`
+   report, so a finished recording sat in `stopping` with Save and Discard both
+   unreachable.
+4. **The `upload` command had no handler.** It fell through the switch to
+   `default`, so Save moved the session to `uploading` and nothing was ever
+   sent. A fifth followed it: the agent's directory layout omitted the hostname
+   segment the API verifies against, so a complete upload was correctly refused
+   as incomplete.
+
+Every one was a silent failure of the kind this project's constitution forbids,
+and each is now impossible to reintroduce without a failing test. 144 tests
+across 19 suites pass.
+
 ## Issues and validation debt
 
-1. **The end-to-end operator run is pending deployment.** The console-driven
-   session, the API killed mid-recording, and Save versus Discard cannot be
-   evidenced until the API is deployed and the agent enrols against it. Every
-   underlying behaviour is unit-covered and the capture path is proven on real
-   footage; what remains unproven is the composition. Tracked in `TASKS.md`.
-2. **`session.stored` is defined but not emitted.** The phase-2 consumer does
+1. **`session.stored` is defined but not emitted.** The phase-2 consumer does
    not exist. Recorded so it is not mistaken for working.
-3. **Webcam capture is unimplemented.** There is no `/dev/video*` on this host.
+2. **Webcam capture is unimplemented.** There is no `/dev/video*` on this host.
    The track type exists and reports as an unavailable capability.
+3. **A command consumed by a crashed agent is not redelivered.** `nextFor`
+   stamps `deliveredAt` on handout, so an agent that dies between receiving a
+   command and acting on it never sees it again. Observed while fixing defect 4
+   above: the pending `upload` had already been marked delivered. Acceptable
+   for a single-operator system where the console can re-issue, but it should
+   become an acknowledgement before a second machine joins.
 
 ## Deviations
 
@@ -129,9 +173,10 @@ before verification and operator preview.
 
 ## Recommendation
 
-Accept with follow-up. The bootstrap is complete and independently evidenced;
-the follow-up is item 1 above, to be recorded here once the deployed system has
-been driven end to end.
+Accept. The bootstrap is complete, deployed, and evidenced end to end on the
+real system: a session recorded from the console survived a 45-second
+controller outage, stopped gracefully, and reached verified storage, while a
+discarded session uploaded nothing.
 
 ## Traceability confirmation
 

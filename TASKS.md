@@ -9,25 +9,20 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
-- [ ] `TASK-001-bootstrap-service` - complete documentation-first onboarding,
-  integration decisions, implementation and validation.
-- [ ] Host agent, per
-  [`plans/2026-09-06-screencast-recorder-agent.md`](docs/superpowers/plans/2026-09-06-screencast-recorder-agent.md):
-  capability discovery, Vault AppRole loading, the chrony barrier, VAAPI
-  capture with segmentation, the activity tracker, the manifest writer, the
-  resumable uploader, the command loop, and the systemd user unit.
+- None. Phase 1 is complete, deployed and validated end to end.
 
 ## Ready next
 
-- [ ] Deploy the API (plan task 9). Requires removing the temporary
-  `screencast-recorder` entry from `shared/scripts/deploy-queue/registry.sh`,
-  which exists only while the repo has no application code. Deliberately
-  deferred: the API has nothing to talk to until the agent exists, so
-  deploying now would place an idle service in the cluster.
-- [ ] End-to-end validation once both halves exist, including killing the API
-  mid-recording to prove capture survives a controller outage.
-- [ ] Complete `docs/12_validation/VAL-TASK-001-bootstrap-service.md` with the
-  recorded evidence, which is what closes TASK-001.
+- [ ] Phase 2 post-production: emit `session.stored`, then the BPCP-owned
+  approval chain (edit -> preview -> owner approval -> YouTube -> owner
+  approval for raw deletion).
+- [ ] Webcam capture, once a camera is attached to a recording host.
+- [ ] MacBook agent: a second registration and a capture-module swap, no API
+  change.
+- [ ] Command acknowledgement. `nextFor` marks a command delivered on handout,
+  so an agent that dies between receiving and acting never sees it again.
+  Acceptable for one operator who can re-issue from the console; it needs
+  fixing before a second machine joins.
 
 ## Blocked
 
@@ -36,6 +31,18 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   2026-09-06; the IPS planning gate and the pre-coding gate both pass.
 
 ## Completed
+
+- [x] Phase 1 delivered and validated end to end on 2026-09-07. Deployed at
+  `screencast.alfares.cz` (image `7f23ec3`), agent running as a systemd user
+  service. A live session recorded 4K screen + Jabra audio + activity metadata,
+  survived a 45-second controller outage with no lost footage, stopped
+  gracefully, and reached `stored` only after independent object readback; a
+  discarded session uploaded nothing. 144 tests across 19 suites. Evidence:
+  `docs/12_validation/VAL-TASK-001-bootstrap-service.md`.
+- [x] Five defects found by that run and fixed with regression tests: display
+  offsets rejected by the API; the agent reading tracks from `start` instead of
+  `prepare`; no handler completing a stop; no handler for `upload`; and a
+  storage layout missing the hostname segment.
 
 - [x] API service, plan tasks 1-8: bootable skeleton on 3391; entities and
   migrations; the agent guard; the registry; the session lifecycle with an

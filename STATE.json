@@ -2,24 +2,24 @@
   "service": {
     "name": "screencast-recorder",
     "kind": "service",
-    "lifecycle": "implementation",
+    "lifecycle": "operational",
     "deployment": "kubernetes"
   },
   "schema_version": "1.0",
   "repository": "screencast-recorder",
   "planning": {
-    "status": "active",
+    "status": "phase-1-complete",
     "active_goal_ids": [],
     "next_ready_goal_ids": [],
     "blocked_goal_ids": [],
     "active_workstream_ids": [],
-    "last_updated_at": "2026-09-06T21:15:00Z"
+    "last_updated_at": "2026-09-07T05:35:00Z"
   },
   "delivery": {
-    "last_validation_id": null,
-    "last_validation_status": null,
+    "last_validation_id": "VAL-TASK-001-bootstrap-service",
+    "last_validation_status": "validated",
     "validation_debt_count": 0,
-    "last_deployment_commit": null
+    "last_deployment_commit": "7f23ec3"
   },
   "collection": {
     "profile": "service",
