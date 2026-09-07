@@ -9,15 +9,30 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
-- None. Phase 1 is complete, deployed and validated end to end.
+- [ ] **Defect: the activity tracker never counts keystrokes or clicks.**
+  `ActivityTracker.countKey()` and `countClick()` have no caller anywhere in
+  `agent/src` — no input listener is wired to them — so every stored session
+  reports zeroes. Evidence: zero callers outside their own definitions; the
+  reference session `d5b209c3` carries 439 samples with `keys=0, clicks=0,
+  hotkeys=0` throughout, alongside 52 mouse movements and 6 distinct windows.
+  **Keypress and click density is unavailable for all existing recordings.**
+  The counters were unit-tested in isolation and reported as working on the
+  strength of the event shape rather than the signal, so a zero read as a quiet
+  second instead of an absent feature. Session preview therefore renders keys
+  and clicks as "not captured" and never as a zero value, a flat line or an
+  empty bar (see
+  [`docs/superpowers/specs/2026-09-07-session-preview-design.md`](docs/superpowers/specs/2026-09-07-session-preview-design.md)).
+  Fixing the input listener is separate work and deliberately not part of
+  preview: the agent holds the only copy of an unrepeatable recording.
 
 ## Ready next
 
 - [ ] Session preview: play back the screen, audio and activity timeline of a
-  stored session. Prompt for a fresh session:
-  `docs/superpowers/specs/2026-09-07-preview-prompt.md`. This is the precondition
-  for the retention rule, since local media is only deleted after the operator
-  has previewed the stored session.
+  stored session. Design:
+  [`docs/superpowers/specs/2026-09-07-session-preview-design.md`](docs/superpowers/specs/2026-09-07-session-preview-design.md);
+  original prompt: `docs/superpowers/specs/2026-09-07-preview-prompt.md`.
+  Preview exists so the operator can see what was recorded; it is not a gate on
+  retention and authorises no deletion.
 - [ ] Phase 2 post-production: emit `session.stored`, then the BPCP-owned
   approval chain (edit -> preview -> owner approval -> YouTube -> owner
   approval for raw deletion).
