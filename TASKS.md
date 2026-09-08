@@ -9,21 +9,6 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
-- [ ] **Defect: the activity tracker never counts keystrokes or clicks.**
-  `ActivityTracker.countKey()` and `countClick()` have no caller anywhere in
-  `agent/src` — no input listener is wired to them — so every stored session
-  reports zeroes. Evidence: zero callers outside their own definitions; the
-  reference session `d5b209c3` carries 439 samples with `keys=0, clicks=0,
-  hotkeys=0` throughout, alongside 52 mouse movements and 6 distinct windows.
-  **Keypress and click density is unavailable for all existing recordings.**
-  The counters were unit-tested in isolation and reported as working on the
-  strength of the event shape rather than the signal, so a zero read as a quiet
-  second instead of an absent feature. Session preview therefore renders keys
-  and clicks as "not captured" and never as a zero value, a flat line or an
-  empty bar (see
-  [`docs/superpowers/specs/2026-09-07-session-preview-design.md`](docs/superpowers/specs/2026-09-07-session-preview-design.md)).
-  Fixing the input listener is separate work and deliberately not part of
-  preview: the agent holds the only copy of an unrepeatable recording.
 
 ## Ready next
 
@@ -51,6 +36,14 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   2026-09-06; the IPS planning gate and the pre-coding gate both pass.
 
 ## Completed
+
+- [x] **Fixed: the activity tracker now counts keystrokes and clicks.** An
+  XInput2 listener (`agent/src/activity/input-listener.ts`) feeds the existing
+  counters. Verified on the live desktop rather than in isolation, which is how
+  the original defect escaped: five synthetic `a` presses plus `ctrl+s` plus two
+  clicks produced `keys=7 clicks=2 hotkeys=["ctrl+key"]`. The keycode is
+  discarded at parse time and replaced by an opaque placeholder, so a
+  combination is visible as `ctrl+key` while the character is never recorded.
 
 - [x] Phase 1 delivered and validated end to end on 2026-09-07. Deployed at
   `screencast.alfares.cz` (image `7f23ec3`), agent running as a systemd user
