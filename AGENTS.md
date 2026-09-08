@@ -81,10 +81,13 @@ and the next concrete action.
   to be deleted; or the session is published and a real YouTube link exists, at
   which point the sources are replaced by that link and the final video.
   Previewing a session is not itself permission to delete it.
-- Auto-deploy is disabled for this repository while it has no application code
-  (see `shared/scripts/deploy-queue/registry.sh`). A commit that fails deploy
-  preflight leaves the shared worker unit FAILED and blocks the queue for every
-  other service; recover with
+- Auto-deploy is ENABLED for this repository: the deny-list entry was removed
+  once the service had application code and a `deploy.config.sh`. The
+  post-commit hook was missing until 2026-09-08 and was restored with
+  `shared/scripts/deploy-queue/install.sh --hooks`; if commits stop reaching
+  the queue, check for `.git/hooks/post-commit` before anything else. A commit
+  that fails deploy preflight leaves the shared worker unit FAILED and blocks
+  the queue for every other service; recover with
   `systemctl --user reset-failed statex-deploy-queue.service`.
 - Service-to-service authentication follows
   `auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md` without

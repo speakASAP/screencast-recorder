@@ -106,6 +106,30 @@ describe('missingAudioProxies', () => {
   });
 });
 
+describe('audioObjectKey with the real PipeWire refs of this host', () => {
+  // Verbatim from the objects stored for session 7af04ef2. Two of the three
+  // differ only in Audio_1 against Audio_2, so a slug that collapsed them
+  // would have both sources write and read the SAME key: one microphone would
+  // silently overwrite the other and the preview would look complete.
+  const REAL = [
+    'alsa_input.usb-Generic_USB_Audio-00.HiFi__hw_Audio_1__source',
+    'alsa_input.usb-Generic_USB_Audio-00.HiFi__hw_Audio_2__source',
+    'alsa_input.usb-_Jabra_Link_390_6CFBEDCB8388-00.mono-fallback',
+  ];
+
+  it('gives every real source a distinct key', () => {
+    const keys = REAL.map((ref) => audioObjectKey('p', ref));
+    expect(new Set(keys).size).toBe(REAL.length);
+  });
+
+  it('produces a key safe to carry in a URL path segment', () => {
+    for (const ref of REAL) {
+      const key = audioObjectKey('p', ref);
+      expect(key).toMatch(/^p\/preview\/audio-[A-Za-z0-9_-]+\.m4a$/);
+    }
+  });
+});
+
 describe('audioObjectKey', () => {
   it('makes a filesystem-safe key from a PipeWire source name', () => {
     // Real source refs contain dots and hyphens, e.g.
