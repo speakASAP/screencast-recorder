@@ -4,6 +4,7 @@ import { Manifest } from '../sessions/entities/manifest.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { SessionsModule } from '../sessions/sessions.module';
 import { StorageModule } from '../storage/storage.module';
+import { PreviewController } from './preview.controller';
 import { PreviewService } from './preview.service';
 import { SessionPreview } from './session-preview.entity';
 
@@ -20,6 +21,7 @@ import { SessionPreview } from './session-preview.entity';
     StorageModule,
     SessionsModule,
   ],
+  controllers: [PreviewController],
   providers: [PreviewService],
   exports: [PreviewService],
 })
