@@ -1,5 +1,6 @@
 import {
   parseAudioInputs,
+  parseCameras,
   parseDisplays,
   parseEncoders,
   pickScreenEncoder,
@@ -103,5 +104,36 @@ describe('pickScreenEncoder', () => {
   it('throws when not even libx264 is available, rather than returning undefined', () => {
     // A silent undefined would surface as a broken ffmpeg command line later.
     expect(() => pickScreenEncoder([], { hasNvidia: false, hasVaapi: false })).toThrow();
+  });
+});
+
+describe('camera labels', () => {
+  it('prefers the kernel device name over the node basename', async () => {
+    // "video9" tells the operator nothing when they are choosing between a
+    // built-in webcam and a phone. The V4L2 driver already publishes a name
+    // -- "iPhone Cam" for a v4l2loopback device created with card_label --
+    // and that is what the console should offer.
+    const cameras = await parseCameras({
+      listNodes: async () => ['video9'],
+      readName: async () => 'iPhone Cam',
+    });
+    expect(cameras).toEqual([{ id: '/dev/video9', label: 'iPhone Cam' }]);
+  });
+
+  it('falls back to the node name when the kernel exposes none', async () => {
+    // An unreadable sysfs entry is not a reason to hide a working camera.
+    const cameras = await parseCameras({
+      listNodes: async () => ['video0'],
+      readName: async () => null,
+    });
+    expect(cameras).toEqual([{ id: '/dev/video0', label: 'video0' }]);
+  });
+
+  it('ignores non-camera entries in /dev', async () => {
+    const cameras = await parseCameras({
+      listNodes: async () => ['video0', 'videodev', 'null'],
+      readName: async () => null,
+    });
+    expect(cameras.map((c) => c.id)).toEqual(['/dev/video0']);
   });
 });

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readdir, statfs } from 'node:fs/promises';
+import { readdir, readFile, statfs } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -185,12 +185,45 @@ export async function detectGpu(): Promise<GpuSupport> {
   return { hasNvidia, hasVaapi };
 }
 
-export async function parseCameras(): Promise<Camera[]> {
+/**
+ * Sources of camera facts, injected so the naming is testable without /dev.
+ */
+export interface CameraProbe {
+  listNodes(): Promise<string[]>;
+  readName(node: string): Promise<string | null>;
+}
+
+/** Reads the driver-published name, e.g. "iPhone Cam" for a v4l2loopback. */
+const sysfsProbe: CameraProbe = {
+  listNodes: () => readdir('/dev'),
+  readName: async (node) => {
+    try {
+      return (await readFile(`/sys/class/video4linux/${node}/name`, 'utf8')).trim() || null;
+    } catch {
+      return null;
+    }
+  },
+};
+
+/**
+ * Lists cameras as the operator should see them.
+ *
+ * The label is the kernel's own device name rather than the node basename:
+ * "video9" says nothing when choosing between a built-in webcam and a phone,
+ * while a v4l2loopback device created with `card_label` reports the name it
+ * was given. The node is still the id, because that is what ffmpeg opens.
+ */
+export async function parseCameras(probe: CameraProbe = sysfsProbe): Promise<Camera[]> {
   try {
-    const entries = await readdir('/dev');
-    return entries
-      .filter((entry) => /^video\d+$/.test(entry))
-      .map((entry) => ({ id: `/dev/${entry}`, label: entry }));
+    const entries = await probe.listNodes();
+    const nodes = entries.filter((entry) => /^video\d+$/.test(entry));
+
+    return Promise.all(
+      nodes.map(async (node) => ({
+        id: `/dev/${node}`,
+        label: (await probe.readName(node)) ?? node,
+      })),
+    );
   } catch {
     return [];
   }
