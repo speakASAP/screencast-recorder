@@ -13,9 +13,12 @@ video without asking the operator to manually find every useful interval.
 - Production status: not deployed
 - Owner: speakASAP <ssfskype@gmail.com>
 
-Auto-deploy is intentionally disabled for this repository while it contains no
-application code; see the entry in
-`shared/scripts/deploy-queue/registry.sh`.
+Auto-deploy is active: this repository is absent from `DEPLOY_QUEUE_DENY` in
+`shared/scripts/deploy-queue/registry.sh` and has a `deploy.config.sh`, which
+together are what make a repository eligible. A commit to `main` queues a
+rollout. The note that previously stood here -- that auto-deploy was disabled
+while the repository held no application code -- stopped being true once the
+service was built.
 
 ## Documentation authority
 

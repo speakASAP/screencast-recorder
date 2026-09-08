@@ -194,7 +194,7 @@ These are live facts confirmed against the running cluster, not intentions.
 | Session | X11, `DISPLAY=:0` | `x11grab`; no Wayland portal required |
 | Display | one, `HDMI-A-0`, 3840x2160 | Single screen track on this host |
 | GPU | AMD Navi 33 (Radeon 7600) | `h264_vaapi` via `/dev/dri/renderD128`; the NVENC encoders ffmpeg lists have no matching hardware |
-| Camera | none — `/dev/video*` absent | No webcam track until a camera is attached; reported as an unavailable capability |
+| Camera | none built in; an iPhone streams MJPEG into `/dev/video9` via `v4l2loopback` | Webcam track records whatever V4L2 node is selected, at the device's native geometry |
 | Microphone | Jabra Link 390 (PipeWire) | Audio track source |
 | `mc` on host | GNU Midnight Commander 4.8.30 | Never use host `mc` for storage; the real client exists only at `/usr/bin/mc` inside the MinIO pod |
 | Host S3 clients | none (`aws`, `mcli`, `rclone`, `boto3` all absent) | The agent uses the Node AWS SDK |
@@ -222,9 +222,10 @@ and
 
 ## Open questions
 
-- Webcam capture is unimplemented because the host currently exposes no
-  `/dev/video*` device. The track type is defined and reported as an
-  unavailable capability; it needs validation once a camera is attached.
+- Webcam audio has no source on this host. A `v4l2loopback` device carries
+  video only, so an iPhone streaming into `/dev/video9` produces a picture and
+  no sound; microphone audio comes from PipeWire as its own track. Capturing
+  the phone's own microphone would need a separate transport.
 - The MacBook agent is designed but not implemented. The `T0` barrier and the
   per-agent storage prefix exist so that adding it does not change the session
   model, but the claim is unproven until a second agent runs.
