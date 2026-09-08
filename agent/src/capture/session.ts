@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { ActivityTracker } from '../activity/tracker';
 import { InputListener, SpawnFn } from '../activity/input-listener';
 import { buildManifest, collectSegments, Manifest } from '../manifest';
-import { buildAudioArgs, buildScreenArgs } from './ffmpeg';
+import { buildAudioArgs, buildScreenArgs, buildWebcamArgs } from './ffmpeg';
 import { CaptureSupervisor, TrackSpec } from './supervisor';
 
 export interface TrackRequest {
@@ -21,6 +21,20 @@ export interface TrackRequest {
 /** Test seam. Production passes nothing and the listener spawns real xinput. */
 export interface StartOptions {
   spawnInput?: SpawnFn;
+}
+
+/**
+ * Flattens a source reference into one path segment.
+ *
+ * A webcam's source_ref is a device node -- `/dev/video9` -- and interpolating
+ * it raw produced `webcam-/dev/video9`, three nested directories instead of
+ * one. The local layout is the S3 key layout, so that shape reaches storage and
+ * breaks the documented `<hostname>/<kind>-<source_ref>/` contract. Display and
+ * PulseAudio names contain no slashes, which is why this surfaced only when the
+ * first camera track was added.
+ */
+export function sourceSlug(sourceRef: string): string {
+  return sourceRef.replace(/^\/+/, '').replace(/[^A-Za-z0-9._-]+/g, '-');
 }
 
 export interface SessionContext {
@@ -64,7 +78,8 @@ export class CaptureSession {
    * session with missing objects.
    */
   trackDir(track: TrackRequest): string {
-    const folder = track.kind === 'metadata' ? 'metadata' : `${track.kind}-${track.source_ref}`;
+    const folder =
+      track.kind === 'metadata' ? 'metadata' : `${track.kind}-${sourceSlug(track.source_ref)}`;
     return join(this.dir, this.context.hostname, folder);
   }
 
@@ -98,6 +113,28 @@ export class CaptureSession {
             x: display.x,
             y: display.y,
             fps: track.fps ?? 15,
+            codec: track.codec ?? 'h264_vaapi',
+            segmentSeconds: track.segment_seconds ?? 60,
+            outDir,
+          }),
+        });
+      } else if (track.kind === 'webcam') {
+        // No presence check against discovered capabilities, unlike a display.
+        // A camera node is not a fixed property of the host: the operator can
+        // plug one in, or start a phone stream into a v4l2loopback device,
+        // between capability discovery and T0. ffmpeg failing on a missing
+        // node degrades this one track, which is the supervisor's job; a
+        // pre-flight check here would instead refuse a camera that is present.
+        specs.push({
+          trackId: track.track_id,
+          kind: track.kind,
+          outDir,
+          args: buildWebcamArgs({
+            // No geometry: the API's prepare payload carries none, so any value
+            // here would be a guess against a camera whose resolution the
+            // operator sets on the device itself.
+            device: track.source_ref,
+            fps: track.fps ?? 30,
             codec: track.codec ?? 'h264_vaapi',
             segmentSeconds: track.segment_seconds ?? 60,
             outDir,

@@ -6,6 +6,7 @@ import { ManifestDto, UploadCompleteDto } from './dto/manifest.dto';
 import { Manifest } from './entities/manifest.entity';
 import { Session, SessionState, isLegalTransition } from './entities/session.entity';
 import { Track, UploadState } from './entities/track.entity';
+import { sourceSlug } from './source-slug';
 
 @Injectable()
 export class ManifestService {
@@ -97,7 +98,7 @@ export class ManifestService {
       const doc = manifest.document as unknown as ManifestDto;
       const host = doc.hostname ?? 'agent';
       for (const track of doc.tracks ?? []) {
-        const dir = `${prefix}/${host}/${track.kind}-${track.source_ref}`;
+        const dir = `${prefix}/${host}/${track.kind}-${sourceSlug(track.source_ref)}`;
         for (const segment of track.segments ?? []) {
           keys.add(`${dir}/${segment.file}`);
         }

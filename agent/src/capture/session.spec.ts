@@ -23,6 +23,16 @@ describe('CaptureSession directory layout', () => {
     );
   });
 
+  it('places a webcam track under its device node', () => {
+    // The v4l2 node is the source_ref, so a camera and a phone streaming into
+    // a loopback device land in distinct prefixes without special-casing.
+    // Flattened, not nested: a raw /dev/video9 would make three directories
+    // where the S3 key contract specifies one.
+    expect(session.trackDir({ track_id: 't', kind: 'webcam', source_ref: '/dev/video9' })).toBe(
+      '/home/ssf/recordings/sess-1/alfares/webcam-dev-video9',
+    );
+  });
+
   it('separates two machines recording the same display id', () => {
     // Without the hostname segment, a MacBook and this host would both write
     // screen-HDMI-A-0 into one prefix and overwrite each other.

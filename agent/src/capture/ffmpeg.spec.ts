@@ -1,4 +1,4 @@
-import { buildAudioArgs, buildScreenArgs } from './ffmpeg';
+import { buildAudioArgs, buildScreenArgs, buildWebcamArgs } from './ffmpeg';
 
 const screenSpec = {
   display: ':0.0',
@@ -88,5 +88,90 @@ describe('buildAudioArgs', () => {
   it('segments on the same boundary as video', () => {
     // Matching boundaries keep the two tracks trimmable at the same points.
     expect(buildAudioArgs(audioSpec).join(' ')).toContain('-segment_time 60');
+  });
+});
+
+describe('buildWebcamArgs', () => {
+  const webcamSpec = {
+    device: '/dev/video9',
+    width: 1280,
+    height: 720,
+    fps: 30,
+    codec: 'h264_vaapi',
+    segmentSeconds: 60,
+    outDir: '/tmp/session/webcam-video9',
+  };
+
+  it('reads the named v4l2 device rather than the screen', () => {
+    const args = buildWebcamArgs(webcamSpec).join(' ');
+    expect(args).toContain('-f v4l2');
+    expect(args).toContain('-i /dev/video9');
+    expect(args).not.toContain('x11grab');
+  });
+
+  it('names no input format by default, letting ffmpeg negotiate', () => {
+    // A v4l2loopback device fed by a phone stream offers exactly one format
+    // (yuv420p on this host) and no MJPEG. Hardcoding -input_format mjpeg made
+    // ffmpeg refuse the device outright:
+    //   Cannot find a proper format for codec 'mjpeg' ... Invalid argument
+    // Only a USB camera, which advertises several, needs to be told which.
+    expect(buildWebcamArgs(webcamSpec)).not.toContain('-input_format');
+  });
+
+  it('requests an explicit input format before the input, not after', () => {
+    // A UVC webcam advertises both raw YUYV and MJPEG, and raw 720p30 exceeds
+    // USB 2.0 bandwidth, so the operator can pin MJPEG. It is an input option:
+    // placed after -i it would apply to the output and be ignored.
+    const args = buildWebcamArgs({ ...webcamSpec, inputFormat: 'mjpeg' });
+    expect(args).toContain('mjpeg');
+    expect(args.indexOf('-input_format')).toBeLessThan(args.indexOf('-i'));
+  });
+
+  it('segments on the same boundary as the screen and audio tracks', () => {
+    // Matching boundaries are what let an editor trim every track at the same
+    // points without re-encoding any of them.
+    const args = buildWebcamArgs(webcamSpec).join(' ');
+    expect(args).toContain('-f segment');
+    expect(args).toContain('-segment_time 60');
+    expect(args).toContain('-reset_timestamps 1');
+    expect(args).toContain('seg-%05d.mp4');
+  });
+
+  it('initialises the VAAPI device and uploads frames to it', () => {
+    const args = buildWebcamArgs(webcamSpec).join(' ');
+    expect(args).toContain('-vaapi_device /dev/dri/renderD128');
+    expect(args).toContain('hwupload');
+  });
+
+  it('uses software encoding without VAAPI flags when the codec is libx264', () => {
+    // Passing -vaapi_device with a software encoder fails at start-up.
+    const args = buildWebcamArgs({ ...webcamSpec, codec: 'libx264' }).join(' ');
+    expect(args).toContain('libx264');
+    expect(args).not.toContain('-vaapi_device');
+    expect(args).not.toContain('hwupload');
+  });
+
+  it('records the requested frame rate and geometry', () => {
+    const args = buildWebcamArgs(webcamSpec).join(' ');
+    expect(args).toContain('-framerate 30');
+    expect(args).toContain('-video_size 1280x720');
+  });
+
+  it('omits the geometry entirely when none is given', () => {
+    // The API has no width/height to send: `tracks` carries no such columns and
+    // the prepare payload is built from six fixed fields. Naming a guessed
+    // 1280x720 would then downscale -- or fail outright -- against a camera
+    // sending 1080p. Omitting -video_size makes ffmpeg take the device's own
+    // format, which is correct for whatever the operator set on the phone.
+    const { width, height, ...noGeometry } = webcamSpec;
+    const args = buildWebcamArgs(noGeometry).join(' ');
+    expect(args).not.toContain('-video_size');
+    expect(args).toContain('-framerate 30');
+  });
+
+  it('carries no -draw_mouse, which v4l2 does not accept', () => {
+    // Screen capture draws the pointer; a camera has none, and the flag is
+    // rejected by the v4l2 demuxer.
+    expect(buildWebcamArgs(webcamSpec).join(' ')).not.toContain('-draw_mouse');
   });
 });
