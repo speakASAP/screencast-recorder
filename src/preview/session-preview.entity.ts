@@ -37,6 +37,16 @@ export interface PreviewArtifact {
   objectKey: string;
   bytes: number;
   durationMs: number | null;
+  /**
+   * Measured level, for audio artifacts only.
+   *
+   * Carried on the artifact rather than in a column of its own because it is
+   * produced by the same render pass that produced the file, and is only
+   * meaningful about that file. A level without its proxy would describe a
+   * source the operator cannot listen to.
+   */
+  meanDb?: number;
+  maxDb?: number;
 }
 
 /**
@@ -73,6 +83,17 @@ export class SessionPreview {
 
   @Column({ type: 'text', nullable: true })
   failureReason!: string | null;
+
+  /**
+   * The source the operator chose, when they chose one.
+   *
+   * Null means the console shows the automatic pick (the loudest measured
+   * source). Persisted rather than held in the page so that reopening a
+   * session does not silently revert to a different microphone than the one
+   * the operator settled on.
+   */
+  @Column({ type: 'text', nullable: true })
+  selectedSourceRef!: string | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   requestedAt!: Date;

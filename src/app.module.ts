@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AgentsModule } from './agents/agents.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { PreviewModule } from './preview/preview.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { StorageModule } from './storage/storage.module';
 import { UiModule } from './ui/ui.module';
@@ -26,6 +27,7 @@ import { UiModule } from './ui/ui.module';
     AgentsModule,
     SessionsModule,
     StorageModule,
+    PreviewModule,
     UiModule,
   ],
 })

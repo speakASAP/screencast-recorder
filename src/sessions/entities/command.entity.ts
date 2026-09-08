@@ -7,6 +7,16 @@ export enum CommandType {
   Stop = 'stop',
   Abort = 'abort',
   Upload = 'upload',
+  /**
+   * Render the preview proxies for a stored session.
+   *
+   * Unlike every other command here this one is not part of the capture loop:
+   * it acts on a session that already finished and uploaded. The agent refuses
+   * it while a recording is running, because a capture in flight holds the
+   * only copy of media that cannot be re-recorded and must not compete with an
+   * encoder for the GPU.
+   */
+  RenderPreview = 'render-preview',
 }
 
 /**

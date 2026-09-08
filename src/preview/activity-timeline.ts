@@ -42,6 +42,44 @@ export interface Timeline {
   sampleCount: number;
 }
 
+
+/**
+ * Patterns for credential material that turns up in terminal titles.
+ *
+ * Deliberately a second copy of the agent's list, not a shared import. The
+ * agent sanitises on write and this sanitises on read, and they are separated
+ * by an object store: `events.jsonl` files recorded before the agent's
+ * sanitiser existed are already in the bucket, and preview is the first thing
+ * that puts a window title on a screen. A redaction that only ever ran at
+ * capture time cannot protect a file that was captured without it.
+ *
+ * The two lists are allowed to diverge in the safe direction -- either side
+ * may add a pattern -- but neither may drop one on the grounds that the other
+ * covers it.
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /hvs\.[A-Za-z0-9._-]{6,}/g, // Vault service token
+  /hvb\.[A-Za-z0-9._-]{6,}/g, // Vault batch token
+  /AKIA[0-9A-Z]{8,}/g, // AWS access key id
+  /sk-[A-Za-z0-9_-]{12,}/g, // OpenAI-style secret key
+  /gh[pousr]_[A-Za-z0-9]{16,}/g, // GitHub token
+  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
+  /\b[A-Fa-f0-9]{32,}\b/g, // long hex: hashes, raw keys
+];
+
+const MAX_TITLE_LENGTH = 200;
+
+/** Redacts and truncates a stored window title on the way out to the console. */
+export function redactStoredTitle(title: string): string {
+  let cleaned = title;
+  for (const pattern of SECRET_PATTERNS) {
+    cleaned = cleaned.replace(pattern, '[redacted]');
+  }
+  return cleaned.length > MAX_TITLE_LENGTH
+    ? `${cleaned.slice(0, MAX_TITLE_LENGTH - 1)}\u2026`
+    : cleaned;
+}
+
 export function parseSamples(jsonl: string): ActivitySample[] {
   const samples: ActivitySample[] = [];
   for (const line of jsonl.split('\n')) {
@@ -49,7 +87,14 @@ export function parseSamples(jsonl: string): ActivitySample[] {
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed) as ActivitySample;
-      if (typeof parsed.ts === 'number') samples.push(parsed);
+      if (typeof parsed.ts !== 'number') continue;
+      // Redact on read, not only on write: a file recorded before the agent's
+      // sanitiser existed is already in the bucket, and this is the first
+      // place its titles are shown to anyone.
+      if (typeof parsed.window === 'string') {
+        parsed.window = redactStoredTitle(parsed.window);
+      }
+      samples.push(parsed);
     } catch {
       // A truncated final line costs one sample, not the session.
     }

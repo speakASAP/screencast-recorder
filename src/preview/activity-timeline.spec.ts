@@ -1,4 +1,4 @@
-import { buildTimeline, parseSamples } from './activity-timeline';
+import { buildTimeline, parseSamples, redactStoredTitle } from './activity-timeline';
 
 const line = (ts: number, window: string, mouse: [number, number] | null) =>
   JSON.stringify({ ts, display: 'HDMI-A-0', window, mouse, clicks: 0, keys: 0, hotkeys: [] });
@@ -46,5 +46,48 @@ describe('buildTimeline', () => {
     // rather than an absent feature. See the defect in TASKS.md.
     const timeline = buildTimeline(parseSamples(line(1000, 'A', [0, 0])), 1);
     expect(JSON.stringify(timeline)).not.toMatch(/"keys"|"clicks"/);
+  });
+});
+
+describe('redactStoredTitle', () => {
+  // The agent redacts on write. This redacts on read, and the two are
+  // separated by an object store: files captured before the agent's sanitiser
+  // existed are already in the bucket, and preview is the first thing that
+  // puts their titles on a screen.
+  //
+  // Samples are assembled at runtime rather than written as literals: a
+  // credential-shaped string in a source file trips the repository's secret
+  // scanner, and quite right too.
+  const vault = `hvs.${'CAESIJ'}${'x'.repeat(18)}`;
+  const aws = `AKIA${'IOSFODNN7EXAMPLE'}`;
+  const openai = `sk-${'abcdefghijklmnopqrst'}`;
+
+  it('redacts a token pasted into a terminal title', () => {
+    expect(redactStoredTitle(`deploy ${vault} - Cursor`)).not.toContain('hvs.');
+    expect(redactStoredTitle(`${aws} in terminal`)).not.toContain(aws);
+    expect(redactStoredTitle(`export API_KEY=${openai}`)).not.toContain(openai);
+  });
+
+  it('truncates an overlong title', () => {
+    expect(redactStoredTitle('x'.repeat(500)).length).toBeLessThanOrEqual(200);
+  });
+
+  it('leaves an ordinary title alone', () => {
+    const title = 'nvim — screencast-recorder/src/agent.ts';
+    expect(redactStoredTitle(title)).toBe(title);
+  });
+
+  it('redacts through parseSamples, not only when called directly', () => {
+    // The path that matters: a stored line reaching the timeline.
+    const stored = JSON.stringify({
+      ts: 1,
+      display: 'HDMI-A-0',
+      window: `deploy ${vault}`,
+      mouse: [1, 1],
+      clicks: 0,
+      keys: 0,
+      hotkeys: [],
+    });
+    expect(parseSamples(stored)[0].window).not.toContain('hvs.');
   });
 });
