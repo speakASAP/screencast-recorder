@@ -11,8 +11,16 @@ import { SessionPreview } from '../preview/session-preview.entity';
  * Shared by the running app and the TypeORM CLI.
  *
  * `synchronize` is never enabled. Schema changes go through a reviewed
- * migration applied with `migration:run`; letting the ORM diff a live database
- * at boot is how a column gets dropped during a rollout.
+ * migration; letting the ORM diff a live database at boot is how a column
+ * gets dropped during a rollout.
+ *
+ * `migrationsRun` IS enabled, and the distinction matters: a migration is a
+ * reviewed, ordered, forward-only script, while synchronize is the ORM
+ * guessing. Without this the pod boots against whatever schema happens to be
+ * there and the mismatch surfaces as a runtime query error on the first
+ * request that touches the new column -- which is exactly what happened to
+ * `session_previews`: two migrations were written, neither ran at boot, and
+ * the table existed only because it had been applied by hand.
  */
 export const dataSourceOptions = {
   type: 'postgres' as const,
@@ -24,6 +32,7 @@ export const dataSourceOptions = {
   entities: [Agent, Command, Manifest, Session, Track, SessionPreview],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false,
+  migrationsRun: true,
   logging: ['error', 'warn'] as ('error' | 'warn')[],
 };
 
