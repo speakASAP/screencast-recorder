@@ -16,6 +16,23 @@ describe('parseVolumedetect', () => {
     expect(parseVolumedetect(stderr)).toEqual({ meanDb: -57.2, maxDb: -20.3 });
   });
 
+
+  it('reads the instance that actually measured, not an empty one', () => {
+    // Captured verbatim from a real run against a stored session: ffmpeg
+    // instantiates volumedetect twice over a concat input, and the first
+    // instance reports n_samples: 0 with no levels at all. Keying off the
+    // first "volumedetect" line, or averaging the instances, would report a
+    // measurement that never happened.
+    const stderr = [
+      '[Parsed_volumedetect_0 @ 0x5e6346369e40] n_samples: 0',
+      '[Parsed_volumedetect_0 @ 0x5e6346409a00] n_samples: 87199744',
+      '[Parsed_volumedetect_0 @ 0x5e6346409a00] mean_volume: -91.0 dB',
+      '[Parsed_volumedetect_0 @ 0x5e6346409a00] max_volume: -91.0 dB',
+      '[Parsed_volumedetect_0 @ 0x5e6346409a00] histogram_91db: 87199744',
+    ].join('\n');
+    expect(parseVolumedetect(stderr)).toEqual({ meanDb: -91, maxDb: -91 });
+  });
+
   it('throws when neither field is present, rather than reporting digital silence', () => {
     // ffmpeg's volumedetect emits mean_volume and max_volume together on
     // success. If neither is present, the measurement failed -- it did not
