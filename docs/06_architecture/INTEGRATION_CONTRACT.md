@@ -101,25 +101,18 @@ contents or secret values merely to improve editing.
 
 Two separate lanes, never conflated.
 
-**Human.** The operator authenticates through hosted Auth against the
-registered user-facing application `screencast-recorder`, whose
-application-scoped default role is `app:screencast-recorder:user`. Credentials
-are entered only at `auth.alfares.cz`.
+**Human.** Hosted Auth against application `screencast-recorder`, default role
+`app:screencast-recorder:user`. Credentials only at `auth.alfares.cz`.
 
 **Machine.** Follow only
 [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
-Local pair for this service: identity
+Local inventory: identity
 `svc-screencast-agent--screencast-recorder@internal.alfares.cz`, role
-`internal:screencast-recorder:agent`. The API declares that role on every
-machine-accessible route.
+`internal:screencast-recorder:agent` on every machine-accessible route. Host agent
+reads credentials via Vault AppRole (non-pod delivery path).
 
-The pod receives credentials through Vault → ExternalSecret → Secret →
-`secretKeyRef`. The host agent, having no pod, reads the same Vault path
-through AppRole (same host-side path used by other non-pod marketplace
-callers).
-
-Storage authorisation is a policy boundary, not a code convention: the runtime
-MinIO service account can address `screencast-sessions` and nothing else.
+Storage authorisation is a policy boundary: the runtime MinIO service account
+can address `screencast-sessions` and nothing else.
 
 ## Synchronous dependencies
 
@@ -141,7 +134,8 @@ Consumed: none in phase 1.
 
 Delivery is at-least-once, so consumers must be idempotent on session id. A
 message carries no caller authority: a handler that needs a privileged action
-makes its own authorised HTTP call under the service identity standard.
+makes its own authorised HTTP call under
+[`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
 
 ## Degraded operation
 

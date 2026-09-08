@@ -51,7 +51,8 @@ Git is authoritative. docs-RAG is a derived discovery index.
 - Operator web UI at `https://screencast.alfares.cz` (Auth-protected).
 - HTTP API on port `3391` for session and agent control.
 - Agent long-poll command channel, authenticated with the pair-specific
-  RS256 service token.
+  Auth-issued RS256 service token per
+  [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
 - `GET /health` for probes and monitoring.
 - Published event `session.stored` on the ecosystem event bus.
 - S3 objects under `sessions/<YYYY>/<MM>/<DD>/<session-id>/` in

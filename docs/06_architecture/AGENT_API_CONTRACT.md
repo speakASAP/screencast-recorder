@@ -27,15 +27,10 @@ address, and it must keep recording when the API is unreachable.
 
 Machine auth follows only
 [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
-Every request carries the pair Bearer token:
-
-```http
-Authorization: Bearer <AGENT_BEARER>
-```
-
-Local pair: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
-role `internal:screencast-recorder:agent`. The agent reads this token from Vault
-via AppRole. Every route below declares that role.
+Local inventory: identity
+`svc-screencast-agent--screencast-recorder@internal.alfares.cz`, role
+`internal:screencast-recorder:agent` on every route below. The agent loads the
+pair token from Vault via AppRole.
 
 Operator (browser) routes authenticate separately through hosted Auth with
 `app:screencast-recorder:user`. They are not part of this contract.

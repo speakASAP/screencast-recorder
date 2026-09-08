@@ -6,7 +6,7 @@
 
 **Architecture:** This plan writes almost no application code. It runs the canonical `register-new-app` onboarding harness, then provisions the four external dependencies the service needs. Each provisioning task ends with a verification command that proves the dependency is reachable with its scoped identity — not that a command exited zero.
 
-**Tech Stack:** `scaffold-new-service.py` (harness), Vault 1.15.6 CLI + AppRole, MinIO `mc` (inside the pod), `provision-service-token.js` (inside the auth pod), PostgreSQL on db-server, Kubernetes (k3s) namespace `statex-apps`.
+**Tech Stack:** `scaffold-new-service.py` (harness), Vault 1.15.6 CLI + AppRole, MinIO `mc` (inside the pod), PostgreSQL on db-server, Kubernetes (k3s) namespace `statex-apps`. Service-token minting follows only [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
 
 **Spec:** `docs/superpowers/specs/2026-09-06-screencast-recorder-design.md`
 
@@ -20,8 +20,8 @@
 - **Never touch `/srv/speakasap-records/speakasap-records/`** — ~618 GB of live lesson audio. Never `mount --bind` over `/srv/speakasap-records`.
 - On the host, `mc` is **Midnight Commander, not the MinIO client**. The real `mc` exists only at `/usr/bin/mc` inside the MinIO pod. Never invoke host `mc` for storage work.
 - Service identity follows only
-  `auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md`. Local pair for
-  this service: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+  [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
+  Local inventory: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
   role `internal:screencast-recorder:agent`. Do not document exceptions.
 - Every Vault key must have an explicit `data:` entry in `k8s/external-secret.yaml`. A Vault key absent from the ExternalSecret never reaches the pod **while ESO still reports `Synced`**.
 - Commits to `main` auto-deploy via the systemd deploy worker. Do not commit application code to `main` until Task 8.
@@ -269,50 +269,44 @@ Do **not** push to `main` yet — pushing triggers auto-deploy of minio-microser
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: Auth application `screencast-recorder` with default role `app:screencast-recorder:user`; service principal `svc-screencast-agent--screencast-recorder@internal.alfares.cz` with role `internal:screencast-recorder:agent`; the minted RS256 token written to a file for Task 5
+- Produces: Auth application `screencast-recorder` with default role
+  `app:screencast-recorder:user`; service principal
+  `svc-screencast-agent--screencast-recorder@internal.alfares.cz` with role
+  `internal:screencast-recorder:agent`; pair token delivered into Vault for Task 5
 
-- [ ] **Step 1: Read the standard before minting anything**
+- [ ] **Step 1: Follow the SPOT**
 
-```bash
-sed -n '1,90p' /home/ssf/Documents/Github/auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md
-```
+Mint and deliver the pair token only per
+[`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
+Do not restate mint/delivery steps here.
 
-Confirm the identity shape and that `provision-service-token.js` is the only sanctioned minting path.
+Local inventory for this service:
 
-- [ ] **Step 2: Register the user-facing application**
+- Human application: `screencast-recorder`, role `app:screencast-recorder:user`,
+  domain `screencast.alfares.cz`
+- Machine pair: email `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+  role `internal:screencast-recorder:agent`
 
-Call `POST /auth/admin/applications/register` as a platform administrator with `name: screencast-recorder`, `type: user_facing`, domain `screencast.alfares.cz`, a display name and description. Obtain the admin JWT via `/home/ssf/Documents/Github/shared/scripts/get-admin-jwt.sh`.
+- [ ] **Step 2: Register the user-facing application and default role**
 
-Then create and activate the application-scoped default role `app:screencast-recorder:user`. Without this exact role a valid password or one-time code fails **after** verification — the login appears to accept the credential and then rejects the session.
+Use the Auth admin application-registration path (or the repo's seed script
+pattern used by other services). Obtain the admin JWT via
+`/home/ssf/Documents/Github/shared/scripts/get-admin-jwt.sh`. Without role
+`app:screencast-recorder:user`, login appears to accept then rejects the session.
 
-- [ ] **Step 3: Dry-run the service-token mint**
+- [ ] **Step 3: Provision the service principal and pair token**
 
-```bash
-kubectl exec -n statex-apps deploy/auth-microservice -c app -- \
-  node scripts/provision-service-token.js \
-  --email=svc-screencast-agent--screencast-recorder@internal.alfares.cz \
-  --service-name=screencast-agent \
-  --role=internal:screencast-recorder:agent \
-  --dry-run
-```
+Use only the sanctioned Auth provisioner named in the SPOT. Confirm the role
+string is exactly `internal:screencast-recorder:agent` (never `global:superadmin`).
+Hold the token for Task 5 without printing it to the transcript.
 
-Expected: a dry-run summary with no writes and no token emitted. Confirm the role string is exactly `internal:screencast-recorder:agent` and that it is not `global:superadmin`.
-
-- [ ] **Step 4: Mint for real**
-
-Re-run Step 3 without `--dry-run`, following the script's confirmation gates and its secure output handling. The token is written to a file inside the pod; retrieve it without printing it to the transcript, and hold it for Task 5.
-
-- [ ] **Step 5: Verify the token is RS256 and carries the right claims**
-
-Decode only the header and the `role`/`email` claims (never the signature) and confirm `alg: RS256`, the expected identity, and the expected role. A token that looks healthy but is HS256 is a known ecosystem failure — every verifier rejects it while dashboards show it as valid.
-
-- [ ] **Step 6: Record the outcome (no values)**
+- [ ] **Step 4: Record the outcome (no values)**
 
 ```bash
 cd /home/ssf/Documents/Github/screencast-recorder
 cat >> TASKS.md <<'EOF'
 - [x] Auth application `screencast-recorder` + role `app:screencast-recorder:user` registered.
-- [x] Service principal `svc-screencast-agent--screencast-recorder` minted RS256 with role `internal:screencast-recorder:agent`.
+- [x] Service principal `svc-screencast-agent--screencast-recorder` provisioned with role `internal:screencast-recorder:agent`.
 EOF
 git add TASKS.md && git commit -m "docs: record auth identity provisioning"
 ```
@@ -326,7 +320,7 @@ git add TASKS.md && git commit -m "docs: record auth identity provisioning"
 - Modify: `.env.example`
 
 **Interfaces:**
-- Consumes: the Postgres DSN (Task 2), the MinIO service-account keys (Task 3), the RS256 agent token (Task 4)
+- Consumes: the Postgres DSN (Task 2), the MinIO service-account keys (Task 3), the agent pair token (Task 4)
 - Produces: Vault path `secret/prod/screencast-recorder` populated, and a Kubernetes Secret `screencast-recorder-secret` containing every key
 
 - [ ] **Step 1: Confirm Vault is unsealed**
@@ -594,7 +588,7 @@ Do not push `shared` without the owner's go-ahead; it is a widely consumed repos
 - Bucket `screencast-sessions` exists; the runtime service account reads it and is **verified denied** on `speakasap-records`; nothing at runtime uses root.
 - Auth holds the user-facing application with `app:screencast-recorder:user`, and
   a service principal with local role `internal:screencast-recorder:agent` per
-  `SERVICE_IDENTITY_CONSUMER_STANDARD.md`.
+  [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
 - All nine Vault keys are present, each has an explicit ExternalSecret entry, and the Kubernetes Secret is verified to contain all nine by enumeration.
 - The AppRole reads only `secret/prod/screencast-recorder` and is verified denied elsewhere.
 - The planning gate passes and the catalog validator accepts the entry.
@@ -614,7 +608,7 @@ What the plan predicted, and what the live systems actually required.
 | Vault path written once in Task 5 | Created in Task 2, patched thereafter | `mkrole.sh` writes `DB_PASSWORD_NEW` into an existing path, so the path had to exist first. `kv put` replaces a whole document; every later write used `kv patch`. |
 | `openssl` inside the MinIO pod | Generated on the host, passed via `env` | The pod has no `openssl`. The first attempt created a user with an empty password and still printed its success line, because the `echo` was not gated on the command's exit status. |
 | Auth application via `register-application.sh` | Wrote `seed-screencast-recorder-roles.js` | Public registration is closed (correct hardening), and the authenticated path needs an admin JWT. The ecosystem's actual pattern is a per-service seed script run inside the auth pod; this one follows `seed-docs-rag-roles.js`. |
-| One service principal | Application + two roles, then the principal | `provision-service-token.js` refuses to mint until the target application and role exist: *"Application not found ... Run seed first."* Then it refuses again until the principal exists: *"Re-run with `--create-if-missing` after owner approval."* Both gates are correct. |
+| One service principal | Application + two roles, then the principal | Auth provisioner (SPOT) refuses until the target application and role exist, then until the principal exists. Both gates are correct. |
 | Nine Vault keys | Thirteen | The DSN was split into `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` to match `mkrole.sh`'s output and the ecosystem's `DB_*` convention. |
 
 ### Findings worth keeping
@@ -649,7 +643,7 @@ What the plan predicted, and what the live systems actually required.
 |---|---|
 | DB role is scoped | `rolsuper/rolcreaterole/rolcreatedb` all false; owns every object; `CONNECT` revoked from `PUBLIC` on `screencast` |
 | Storage credential is scoped | Reads and writes `screencast-sessions`; denied on `speakasap-records`, `backups`, `cv-uploads`, `catalog-media`, `wisdom-quotes`, `school-committee`, and `mc admin` |
-| Token is genuine RS256 | Header decoded: `alg=RS256`, `kid=a975635403084850`, `type=service`, exactly one role `internal:screencast-recorder:agent` |
+| Service identity accepted | Authenticated agent call succeeds with role `internal:screencast-recorder:agent` (verify per SPOT; do not re-decode tokens in docs) |
 | Secret reaches the pod | All thirteen keys enumerated from the live Secret, none missing, none extra |
 | AppRole is least privilege | Wrapped `secret_id` → unwrap → login → read own path; denied on `secret/prod/cv-tuning` and `secret/prod/minio-microservice`; denied write to its own path |
 
