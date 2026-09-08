@@ -270,3 +270,113 @@ describe('PreviewService session lookup', () => {
     await expect(service.status('missing')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+const readyArtifacts = [
+  { kind: 'video', sourceRef: null, objectKey: 'p/preview/proxy.mp4', bytes: 529020, durationMs: 87837 },
+  { kind: 'audio', sourceRef: 'jabra', objectKey: 'p/preview/audio-jabra.m4a', bytes: 23487, durationMs: 87830, meanDb: -91, maxDb: -91 },
+  { kind: 'audio', sourceRef: 'usb1', objectKey: 'p/preview/audio-usb1.m4a', bytes: 24087, durationMs: 87884, meanDb: -91, maxDb: -91 },
+  { kind: 'audio', sourceRef: 'usb2', objectKey: 'p/preview/audio-usb2.m4a', bytes: 282122, durationMs: 87883, meanDb: -57.2, maxDb: -20.3 },
+];
+
+describe('PreviewService.completeRender', () => {
+  const rendering = () => ({ state: PreviewState.Rendering, artifacts: [], selectedSourceRef: null });
+
+  it('marks a complete set ready and records which path it came from', async () => {
+    const { service, previews } = makeService(['jabra', 'usb1', 'usb2']);
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'ready', artifacts: readyArtifacts, source_path: 'local',
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({ state: PreviewState.Ready, sourcePath: 'local' }),
+    );
+  });
+
+  it('refuses to mark ready when an audio source has no proxy', async () => {
+    // Three sources with two proxies is an incomplete preview. The missing
+    // one is exactly the microphone the operator would have needed, and
+    // offering the other two silently is the failure this design prevents.
+    // An agent claiming success is not evidence, the same way dto.verified is
+    // deliberately not trusted on upload.
+    const { service, previews } = makeService(['jabra', 'usb1', 'usb2']);
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'ready', source_path: 'local',
+      artifacts: readyArtifacts.filter((a) => a.sourceRef !== 'usb1'),
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: PreviewState.Failed,
+        failureReason: expect.stringContaining('usb1'),
+      }),
+    );
+  });
+
+  it('refuses to mark ready with no video proxy at all', async () => {
+    const { service, previews } = makeService(['jabra']);
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'ready', source_path: 'local',
+      artifacts: readyArtifacts.filter((a) => a.kind === 'audio' && a.sourceRef === 'jabra'),
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({ state: PreviewState.Failed }),
+    );
+  });
+
+  it('records a failure reason instead of leaving the row rendering forever', async () => {
+    const { service, previews } = makeService();
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'failed', reason: 'render_failed', detail: 'ffmpeg died',
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: PreviewState.Failed,
+        failureReason: expect.stringContaining('ffmpeg died'),
+      }),
+    );
+  });
+
+  it('keeps a deferred render pending so the operator can retry after recording', async () => {
+    const { service, previews } = makeService();
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'deferred', reason: 'capture_running',
+    } as never);
+    expect(previews.save).toHaveBeenCalledWith(
+      expect.objectContaining({ state: PreviewState.Pending }),
+    );
+  });
+
+  it('stamps readyAt only on a genuinely ready preview', async () => {
+    const { service, previews } = makeService(['jabra', 'usb1', 'usb2']);
+    previews.findOne.mockResolvedValue(rendering());
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'ready', artifacts: readyArtifacts, source_path: 'local',
+    } as never);
+    expect(previews.save.mock.calls[0][0].readyAt).toBeInstanceOf(Date);
+  });
+
+  it('refuses a transition the state machine forbids rather than rewriting a ready row', async () => {
+    // A ready proxy is reusable and is never re-rendered in place. A late or
+    // duplicated callback must not overwrite it.
+    const { service, previews } = makeService(['jabra', 'usb1', 'usb2']);
+    previews.findOne.mockResolvedValue({
+      state: PreviewState.Ready, artifacts: readyArtifacts, selectedSourceRef: null,
+    });
+    await service.completeRender('s1', {
+      agent_id: 'a1', state: 'failed', reason: 'render_failed', detail: 'late report',
+    } as never);
+    expect(previews.save).not.toHaveBeenCalled();
+  });
+
+  it('ignores a callback for a session with no preview row rather than creating one', async () => {
+    // A render is only ever started through requestRender, which creates the
+    // row. A callback with no row is a stale report from an earlier deploy.
+    const { service, previews } = makeService();
+    previews.findOne.mockResolvedValue(null);
+    await service.completeRender('s1', { agent_id: 'a1', state: 'ready', artifacts: [] } as never);
+    expect(previews.save).not.toHaveBeenCalled();
+  });
+});

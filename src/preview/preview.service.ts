@@ -7,8 +7,20 @@ import { Manifest } from '../sessions/entities/manifest.entity';
 import { Session, SessionState } from '../sessions/entities/session.entity';
 import { StorageService } from '../storage/storage.service';
 import { buildTimeline, parseSamples, Timeline } from './activity-timeline';
-import { AudioSourceLevel, AudioSourceView, DIGITAL_SILENCE_DB, selectAudioSource } from './audio-selection';
-import { PreviewArtifact, PreviewState, SessionPreview } from './session-preview.entity';
+import {
+  AudioSourceLevel,
+  AudioSourceView,
+  DIGITAL_SILENCE_DB,
+  missingAudioProxies,
+  selectAudioSource,
+} from './audio-selection';
+import { PreviewCompleteDto } from './dto/preview.dto';
+import {
+  isLegalPreviewTransition,
+  PreviewArtifact,
+  PreviewState,
+  SessionPreview,
+} from './session-preview.entity';
 
 /**
  * How long a presigned media URL stays valid.
@@ -213,6 +225,101 @@ export class PreviewService {
     preview.selectedSourceRef = sourceRef;
     await this.previews.save(preview);
     return this.status(sessionId);
+  }
+
+  /**
+   * Accepts the agent's report at the end of a render.
+   *
+   * Completeness is VERIFIED here rather than trusted. An agent reporting
+   * "ready" is not evidence that every source rendered -- the same reason
+   * `ManifestService.completeUpload` does not trust `dto.verified`. A set
+   * missing one source is saved as failed, naming the source, because the
+   * missing one is exactly the microphone the operator would have needed and
+   * silently offering the rest is the failure this design exists to prevent.
+   */
+  async completeRender(sessionId: string, dto: PreviewCompleteDto): Promise<void> {
+    const preview = await this.previews.findOne({ where: { sessionId } });
+    if (!preview) {
+      // A render is only started through requestRender, which creates the
+      // row. A callback with no row is a stale report, not a render to record.
+      this.logger.warn(`preview-complete for session ${sessionId} with no preview row; ignored`);
+      return;
+    }
+
+    const target = this.targetState(dto);
+    if (!isLegalPreviewTransition(preview.state, target)) {
+      // A ready proxy is reusable and never re-rendered in place, so a late
+      // or duplicated callback must not overwrite it.
+      this.logger.warn(
+        `Ignoring preview-complete for ${sessionId}: ${preview.state} -> ${target} is not a legal transition`,
+      );
+      return;
+    }
+
+    if (target === PreviewState.Ready) {
+      const artifacts = (dto.artifacts ?? []) as PreviewArtifact[];
+      const problem = await this.incompleteness(sessionId, artifacts);
+      if (problem) {
+        preview.state = PreviewState.Failed;
+        preview.failureReason = problem;
+        preview.sourcePath = dto.source_path ?? preview.sourcePath;
+        await this.previews.save(preview);
+        return;
+      }
+
+      preview.state = PreviewState.Ready;
+      preview.artifacts = artifacts;
+      preview.sourcePath = dto.source_path ?? null;
+      preview.failureReason = null;
+      preview.readyAt = new Date();
+      await this.previews.save(preview);
+      return;
+    }
+
+    preview.state = target;
+    if (target === PreviewState.Failed) {
+      // Never leave the row rendering forever with no reason on it: the
+      // operator's only other signal is a screen that never changes.
+      preview.failureReason = [dto.reason, dto.detail].filter(Boolean).join(': ') || 'render failed';
+    } else {
+      // Deferred: the render stood aside for a recording and never started.
+      preview.failureReason = dto.reason ?? 'deferred';
+    }
+    await this.previews.save(preview);
+  }
+
+  private targetState(dto: PreviewCompleteDto): PreviewState {
+    if (dto.state === 'ready') return PreviewState.Ready;
+    if (dto.state === 'deferred') return PreviewState.Pending;
+    return PreviewState.Failed;
+  }
+
+  /** Names what is missing from a claimed-complete set, or null when it is whole. */
+  private async incompleteness(
+    sessionId: string,
+    artifacts: PreviewArtifact[],
+  ): Promise<string | null> {
+    if (!artifacts.some((a) => a.kind === 'video')) {
+      return 'the render reported ready with no video proxy';
+    }
+
+    const documents = await this.manifestDocuments(sessionId);
+    const missing = missingAudioProxies(
+      this.audioTrackRefs(documents),
+      artifacts.filter((a) => a.kind === 'audio').map((a) => a.objectKey),
+      // missingAudioProxies rebuilds each expected key from the prefix, and
+      // the artifact keys already carry it, so the prefix is derived from one
+      // of them rather than re-read from the session.
+      this.prefixOf(artifacts),
+    );
+    return missing.length > 0
+      ? `no audio proxy rendered for ${missing.join(', ')}`
+      : null;
+  }
+
+  private prefixOf(artifacts: PreviewArtifact[]): string {
+    const key = artifacts.find((a) => a.kind === 'video')?.objectKey ?? '';
+    return key.replace(/\/preview\/[^/]*$/, '');
   }
 
   private async requireSession(sessionId: string): Promise<Session> {
