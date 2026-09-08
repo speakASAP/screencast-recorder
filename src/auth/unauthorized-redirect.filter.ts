@@ -1,4 +1,11 @@
-import { ArgumentsHost, Catch, ExceptionFilter, UnauthorizedException } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { SESSION_COOKIE } from './session.constants';
 
@@ -19,10 +26,22 @@ import { SESSION_COOKIE } from './session.constants';
  * Machine callers keep the status code. A fetch() handed a 302 to an HTML
  * login page parses the page as data and fails somewhere further along, which
  * hides the cause; the console's client script checks for 401 instead.
+ *
+ * A 503 from an unreachable Auth is treated the same way for browsers. The
+ * guard raises it when it cannot reach the identity provider at all, and
+ * rendering that as JSON left /console showing
+ * {"message":"Identity provider unreachable"} with no way forward.
+ *
+ * Note the cost, which is deliberate and was chosen explicitly: the session
+ * being cleared here is probably still VALID -- Auth was unreachable, not
+ * rejecting. During an outage the operator loses a working session and lands
+ * on /auth/login, which points at the same Auth that is down. They must sign
+ * in again once it recovers. The alternative (hold the cookie and show a retry
+ * page) was considered and not taken.
  */
-@Catch(UnauthorizedException)
+@Catch(UnauthorizedException, ServiceUnavailableException)
 export class UnauthorizedRedirectFilter implements ExceptionFilter {
-  catch(exception: UnauthorizedException, host: ArgumentsHost): void {
+  catch(exception: HttpException, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();

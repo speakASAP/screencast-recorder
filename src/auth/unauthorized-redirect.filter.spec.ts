@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { UnauthorizedException } from '@nestjs/common';
+import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import type { ArgumentsHost } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { SESSION_COOKIE } from './session.constants';
@@ -93,6 +93,42 @@ describe('UnauthorizedRedirectFilter', () => {
     filter.catch(new UnauthorizedException('Session expired'), h);
 
     expect(rec.redirectedTo).toBe('/auth/login?next=%2Fsessions%2Fabc');
+  });
+
+  it('sends a browser to sign in when the identity provider is unreachable', () => {
+    // Auth being down renders {"message":"Identity provider unreachable"} at
+    // /console, which offers the operator no way forward. Same treatment as a
+    // dead session: go to the login page.
+    const { host: h, rec } = navigation('/console', { [SESSION_COOKIE]: 'live' });
+
+    filter.catch(new ServiceUnavailableException('Identity provider unreachable'), h);
+
+    expect(rec.redirectedTo).toBe('/auth/login?next=%2Fconsole');
+  });
+
+  it('clears the session cookie on a 503 as well', () => {
+    const { host: h, rec } = navigation('/console', { [SESSION_COOKIE]: 'live' });
+
+    filter.catch(new ServiceUnavailableException('Identity provider unreachable'), h);
+
+    expect(rec.cleared).toContain(SESSION_COOKIE);
+  });
+
+  it('answers an API call with JSON 503, never a redirect', () => {
+    // The machine lane must still see the outage as an outage. A fetch()
+    // handed a 302 to a login page cannot tell "auth is down" from "signed
+    // out", and the console's retry logic depends on the difference.
+    const { host: h, rec } = host({
+      originalUrl: '/api/sessions',
+      path: '/api/sessions',
+      headers: { accept: 'application/json' },
+      cookies: { [SESSION_COOKIE]: 'live' },
+    });
+
+    filter.catch(new ServiceUnavailableException('Identity provider unreachable'), h);
+
+    expect(rec.redirectedTo).toBeNull();
+    expect(rec.status).toBe(503);
   });
 
   it('answers an API call with JSON 401, never a redirect', () => {
