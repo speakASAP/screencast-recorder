@@ -9,18 +9,34 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
-- [ ] **Session preview, in progress.** Plan:
-  [`docs/superpowers/plans/2026-09-07-session-preview.md`](docs/superpowers/plans/2026-09-07-session-preview.md).
-  Tasks 1-6 are committed: activity timeline, audio selection, the
-  `session_previews` entity and its migration, presigned media URLs,
-  `PreviewService` and `PreviewController`. 239 tests across 28 suites, green.
-  Remaining: task 7 (agent-side proxy renderer), task 8 (the agent's
-  `render-preview` command handling, which must refuse while a capture is
-  running), task 9 (the `preview-complete` callback), task 10 (the console
-  screen) and task 11 (verification against a real recorded session).
-  Nothing is deployed yet -- the routes exist but no agent can answer a
-  render command.
+- [ ] **Session preview: tasks 1-10 implemented, awaiting live verification.**
+  Plan: [`docs/superpowers/plans/2026-09-07-session-preview.md`](docs/superpowers/plans/2026-09-07-session-preview.md).
+  All code is committed and pushed: activity timeline, audio selection, the
+  `session_previews` entity and both migrations, presigned media URLs,
+  `PreviewService`, `PreviewController`, `PreviewAgentController`, the agent
+  renderer and its contention refusal, the `preview-complete` callback and
+  the console screen. 288 tests across 32 suites, green.
 
+  Verified against the real system so far:
+  - The ffmpeg arguments render a real 15.2-minute stored session: 65 MB of
+    4K source to a 4.4 MB proxy in 39.8s, probed at 960x540/10fps, `moov` at
+    byte 36 so faststart genuinely works, and audio/video durations agreeing
+    to within 1s.
+  - MinIO answers a presigned Range request with `206 Partial Content`,
+    `content-range: bytes 0-102399/3341393`, exactly 102400 bytes. Seeking
+    needs no CORS and no chunking, and the bucket was not modified.
+  - The API's and the agent's key slugging agree on all three real PipeWire
+    source refs of this host, and give each a distinct key.
+
+  Still to do (task 11): preview a session through the deployed console,
+  confirm all three audio sources play and that switching source does not
+  reload the video, verify the contention rule live by requesting a render
+  during a recording, and confirm nothing was deleted.
+
+  **Blocked on the deploy queue**: the pod still runs image `2415b96` while
+  HEAD is `f402ce6`. The queue is shared and had five services ahead. The
+  agent also needs restarting to pick up `render-preview` -- until both are
+  current, nothing above can be exercised end to end.
 
 ## Ready next
 
