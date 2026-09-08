@@ -1,4 +1,5 @@
-import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 export const S3_CLIENT = 'S3_CLIENT';
@@ -54,6 +55,42 @@ export class StorageService {
     }
 
     return { verified: missing.length === 0, missing, found: sizes.size };
+  }
+
+  /**
+   * Short-lived presigned GET so the browser fetches media directly.
+   *
+   * The API must not become the data path for video, exactly as it is not the
+   * data path for upload. Presigning spends the `s3:GetObject` the scoped
+   * credential already holds and needs no new permission and no public bucket
+   * policy; the expiry is what keeps a copied URL from outliving the page it
+   * was rendered on.
+   */
+  async presignGet(key: string, expirySeconds: number): Promise<string> {
+    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: expirySeconds,
+    });
+  }
+
+  /**
+   * Reads a small text object whole. Used for events.jsonl, which runs to
+   * roughly 10 MB over four hours -- fine to parse in the pod, unlike video,
+   * which never passes through here.
+   */
+  async getObjectText(key: string): Promise<string | null> {
+    try {
+      const response = await this.s3.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      return (await response.Body?.transformToString()) ?? null;
+    } catch (error) {
+      const name = (error as { name?: string }).name;
+      // Absent is an answer -- a session may legitimately have no activity
+      // file. Anything else is a failure and must surface rather than be
+      // reported as an empty timeline.
+      if (name === 'NoSuchKey' || name === 'NotFound') return null;
+      throw error;
+    }
   }
 
   private async listSizes(prefix: string): Promise<Map<string, number>> {
