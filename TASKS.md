@@ -9,6 +9,19 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
+- [ ] Owner check of the preview screen in a browser. Everything server-side is
+  validated (`docs/12_validation/VAL-TASK-002-session-preview.md`), but three
+  behaviours only a real browser can confirm: that switching audio source
+  mid-playback swaps the sound without the video reloading or restarting, that
+  clicking the timeline seeks and the active audio follows, and that the two
+  digital-silence sources play as silence rather than erroring.
+
+  The Preview button shipped rendered but with no click handler bound, which
+  no test caught because `public/app.js` had no coverage at all. Fixed in
+  `9405bf3` and now guarded by `src/ui/console-wiring.spec.ts`, which asserts
+  every generated button has a handler and every id the script addresses
+  exists in the page.
+
 ## Ready next
 
 - [ ] Phase 2 post-production: emit `session.stored`, then the BPCP-owned
