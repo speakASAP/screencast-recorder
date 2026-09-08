@@ -16,7 +16,7 @@ const reflector = (meta: Record<string, boolean>): Reflector =>
 
 /** Resolves any id to the given token, or nothing when null. */
 const store = (token: string | null): SessionStore =>
-  ({ get: () => token }) as unknown as SessionStore;
+  ({ get: async () => token }) as unknown as SessionStore;
 
 describe('UserAuthGuard', () => {
   const originalFetch = global.fetch;

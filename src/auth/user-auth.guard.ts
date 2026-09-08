@@ -61,8 +61,9 @@ export class UserAuthGuard implements CanActivate {
     const sessionId = request.cookies?.[SESSION_COOKIE];
     if (!sessionId) throw new UnauthorizedException('Not signed in');
 
-    // The cookie holds an opaque id; the token lives server-side.
-    const token = this.sessions.get(sessionId);
+    // The cookie holds an opaque id; the token lives server-side, in the
+    // database, so it survives the restart that used to invalidate it.
+    const token = await this.sessions.get(sessionId);
     if (!token) throw new UnauthorizedException('Session expired');
 
     request.user = await this.validate(token);

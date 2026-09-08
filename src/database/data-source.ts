@@ -6,6 +6,7 @@ import { Manifest } from '../sessions/entities/manifest.entity';
 import { Session } from '../sessions/entities/session.entity';
 import { Track } from '../sessions/entities/track.entity';
 import { SessionPreview } from '../preview/session-preview.entity';
+import { AuthSession } from '../auth/auth-session.entity';
 
 /**
  * Shared by the running app and the TypeORM CLI.
@@ -29,7 +30,7 @@ export const dataSourceOptions = {
   database: process.env.DB_NAME ?? 'screencast',
   username: process.env.DB_USER ?? 'screencast_app',
   password: process.env.DB_PASSWORD ?? '',
-  entities: [Agent, Command, Manifest, Session, Track, SessionPreview],
+  entities: [Agent, Command, Manifest, Session, Track, SessionPreview, AuthSession],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false,
   migrationsRun: true,

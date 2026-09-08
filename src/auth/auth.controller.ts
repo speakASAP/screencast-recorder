@@ -113,11 +113,11 @@ export class AuthController {
   @Post('session')
   @Public()
   @HttpCode(200)
-  session(
+  async session(
     @Body() body: { access_token?: string; state?: string },
     @Req() req: Request,
     @Res() res: Response,
-  ): void {
+  ): Promise<void> {
     const expected = req.cookies?.[STATE_COOKIE];
 
     if (!body.access_token) throw new BadRequestException('missing access_token');
@@ -143,7 +143,7 @@ export class AuthController {
     // 4096-byte limit, so clients drop it silently and the login appears to
     // work while every later request is unauthenticated.
     const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-    const sessionId = this.sessions.create(body.access_token, SESSION_TTL_MS);
+    const sessionId = await this.sessions.create(body.access_token, SESSION_TTL_MS);
 
     res.cookie(SESSION_COOKIE, sessionId, {
       httpOnly: true,
@@ -163,11 +163,11 @@ export class AuthController {
 
   @Get('logout')
   @Public()
-  logout(@Req() req: Request, @Res() res: Response): void {
+  async logout(@Req() req: Request, @Res() res: Response): Promise<void> {
     const id = req.cookies?.[SESSION_COOKIE];
     // Drop the server-side entry too: clearing only the cookie would leave a
     // usable token in memory for anyone who kept the id.
-    if (id) this.sessions.destroy(id);
+    if (id) await this.sessions.destroy(id);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     // Back to the public page, not straight into another sign-in.
     res.redirect('/');

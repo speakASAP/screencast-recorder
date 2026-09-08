@@ -2,6 +2,19 @@ import 'reflect-metadata';
 import { AuthController } from './auth.controller';
 import { SessionStore } from './session.store';
 
+/** In-memory stand-in for the auth_sessions repository. */
+const store = () => {
+  const rows = new Map<string, { id: string; token: string; expiresAt: Date }>();
+  return new SessionStore({
+    save: async (row: { id: string; token: string; expiresAt: Date }) => {
+      rows.set(row.id, row);
+      return row;
+    },
+    findOne: async ({ where: { id } }: { where: { id: string } }) => rows.get(id) ?? null,
+    delete: async () => ({ affected: 0 }),
+  } as never);
+};
+
 const res = () => {
   const r: any = {};
   r.cookie = jest.fn().mockReturnValue(r);
@@ -16,7 +29,7 @@ const res = () => {
 };
 
 describe('AuthController state handling', () => {
-  const controller = () => new AuthController(new SessionStore());
+  const controller = () => new AuthController(store());
 
   it('sets the state cookie with SameSite=None so it survives the Auth round trip', () => {
     // The browser leaves for auth.alfares.cz and returns, then reads this
@@ -30,29 +43,29 @@ describe('AuthController state handling', () => {
     expect(options.httpOnly).toBe(true);
   });
 
-  it('says the cookie is missing rather than blaming the state value', () => {
+  it('says the cookie is missing rather than blaming the state value', async () => {
     // A missing cookie is a delivery problem; a differing value is a CSRF
     // signal. One message for both sends the reader hunting an attack.
     const r = res();
-    expect(() =>
+    await expect(
       controller().session({ access_token: 't', state: 'x' }, { cookies: {} } as never, r),
-    ).toThrow(/missing or expired/i);
+    ).rejects.toThrow(/missing or expired/i);
   });
 
-  it('still rejects a genuinely mismatched state', () => {
+  it('still rejects a genuinely mismatched state', async () => {
     const r = res();
-    expect(() =>
+    await expect(
       controller().session(
         { access_token: 't', state: 'attacker' },
         { cookies: { screencast_auth_state: 'real' } } as never,
         r,
       ),
-    ).toThrow(/state mismatch/i);
+    ).rejects.toThrow(/state mismatch/i);
   });
 
-  it('accepts a matching state and sets a session cookie', () => {
+  it('accepts a matching state and sets a session cookie', async () => {
     const r = res();
-    controller().session(
+    await controller().session(
       { access_token: 'the-token', state: 'match' },
       { cookies: { screencast_auth_state: 'match' } } as never,
       r,
@@ -66,11 +79,11 @@ describe('AuthController state handling', () => {
 });
 
 describe('post-sign-in destination', () => {
-  const controller = () => new AuthController(new SessionStore());
+  const controller = () => new AuthController(store());
 
-  it('returns the remembered destination so the callback lands there', () => {
+  it('returns the remembered destination so the callback lands there', async () => {
     const r = res();
-    controller().session(
+    await controller().session(
       { access_token: 't', state: 'm' },
       { cookies: { screencast_auth_state: 'm', screencast_auth_next: '/console' } } as never,
       r,

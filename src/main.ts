@@ -5,6 +5,7 @@ import * as cookieParser from 'cookie-parser';
 import { SessionStore } from './auth/session.store';
 import { UserAuthGuard } from './auth/user-auth.guard';
 import { sessionRedirect } from './auth/session-redirect.middleware';
+import { UnauthorizedRedirectFilter } from './auth/unauthorized-redirect.filter';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
@@ -26,6 +27,11 @@ async function bootstrap(): Promise<void> {
   // Resolved from the container rather than constructed here: the guard must
   // share the one SessionStore instance the auth controller writes to.
   app.useGlobalGuards(new UserAuthGuard(app.get(Reflector), app.get(SessionStore)));
+
+  // A browser holding a dead session must land on the login page, not on a
+  // JSON 401 it cannot act on. Registered after the guard so it catches what
+  // the guard throws; API callers still get the status code.
+  app.useGlobalFilters(new UnauthorizedRedirectFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),

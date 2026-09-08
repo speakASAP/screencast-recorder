@@ -20,6 +20,14 @@ describe('the data source contract', () => {
 
   it('registers every entity the app persists', () => {
     const names = dataSourceOptions.entities.map((entity) => entity.name).sort();
-    expect(names).toEqual(['Agent', 'Command', 'Manifest', 'Session', 'SessionPreview', 'Track']);
+    expect(names).toEqual([
+      'Agent',
+      'AuthSession',
+      'Command',
+      'Manifest',
+      'Session',
+      'SessionPreview',
+      'Track',
+    ]);
   });
 });

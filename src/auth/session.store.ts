@@ -1,10 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'node:crypto';
-
-interface Entry {
-  token: string;
-  expiresAt: number;
-}
+import { LessThanOrEqual, Repository } from 'typeorm';
+import { AuthSession } from './auth-session.entity';
 
 /**
  * Server-side session store: the cookie carries a short opaque id, never the
@@ -16,42 +14,45 @@ interface Entry {
  * limit, so browsers and curl drop it silently -- the login appears to succeed
  * and the next request is unauthenticated.
  *
- * In-memory is deliberate for a single-replica, single-operator service: a
- * restart signs the operator out, which is a mild annoyance rather than data
- * loss, and it keeps the token out of the database. A second replica would
- * need Redis, and that is the moment to add it, not before.
+ * Rows live in Postgres, not in a Map. The cookie survives a pod restart, so
+ * the session it names has to as well: with an in-memory store every deploy
+ * left browsers holding an id the server no longer knew, and each reload
+ * answered with a 401 the operator could not clear. Persisting also means a
+ * second replica is a configuration change rather than a rewrite.
  */
 @Injectable()
 export class SessionStore {
-  private readonly sessions = new Map<string, Entry>();
+  constructor(
+    @InjectRepository(AuthSession)
+    private readonly sessions: Repository<AuthSession>,
+  ) {}
 
-  create(token: string, ttlMs: number): string {
-    this.sweep();
+  async create(token: string, ttlMs: number): Promise<string> {
+    await this.sweep();
     const id = randomBytes(32).toString('base64url');
-    this.sessions.set(id, { token, expiresAt: Date.now() + ttlMs });
+    await this.sessions.save({ id, token, expiresAt: new Date(Date.now() + ttlMs) });
     return id;
   }
 
-  get(id: string): string | null {
-    const entry = this.sessions.get(id);
+  async get(id: string): Promise<string | null> {
+    const entry = await this.sessions.findOne({ where: { id } });
     if (!entry) return null;
 
-    if (entry.expiresAt <= Date.now()) {
-      this.sessions.delete(id);
+    // Checked here as well as swept: a row that outlived its ttl but has not
+    // been swept yet must not authenticate.
+    if (entry.expiresAt.getTime() <= Date.now()) {
+      await this.destroy(id);
       return null;
     }
     return entry.token;
   }
 
-  destroy(id: string): void {
-    this.sessions.delete(id);
+  async destroy(id: string): Promise<void> {
+    await this.sessions.delete(id);
   }
 
-  /** Drops expired entries so an abandoned browser cannot grow the map forever. */
-  private sweep(): void {
-    const now = Date.now();
-    for (const [id, entry] of this.sessions) {
-      if (entry.expiresAt <= now) this.sessions.delete(id);
-    }
+  /** Drops expired rows so an abandoned browser cannot grow the table forever. */
+  private async sweep(): Promise<void> {
+    await this.sessions.delete({ expiresAt: LessThanOrEqual(new Date()) });
   }
 }
