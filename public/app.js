@@ -431,6 +431,15 @@ async function loadSessions() {
         </tr>`,
     )
     .join('');
+
+  // Wired here rather than in boot: the rows are rebuilt on every refresh, so
+  // a listener attached once to the original markup would be lost the first
+  // time the list reloaded.
+  for (const button of document.querySelectorAll('button.preview-open')) {
+    button.addEventListener('click', () =>
+      openPreview(button.dataset.session, button.dataset.title),
+    );
+  }
 }
 
 // -------------------------------------------------------------------- preview
