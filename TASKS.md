@@ -9,6 +9,18 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
+- [ ] **Session preview, in progress.** Plan:
+  [`docs/superpowers/plans/2026-09-07-session-preview.md`](docs/superpowers/plans/2026-09-07-session-preview.md).
+  Tasks 1-6 are committed: activity timeline, audio selection, the
+  `session_previews` entity and its migration, presigned media URLs,
+  `PreviewService` and `PreviewController`. 239 tests across 28 suites, green.
+  Remaining: task 7 (agent-side proxy renderer), task 8 (the agent's
+  `render-preview` command handling, which must refuse while a capture is
+  running), task 9 (the `preview-complete` callback), task 10 (the console
+  screen) and task 11 (verification against a real recorded session).
+  Nothing is deployed yet -- the routes exist but no agent can answer a
+  render command.
+
 
 ## Ready next
 
