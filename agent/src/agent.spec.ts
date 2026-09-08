@@ -5,9 +5,15 @@ type TestDeps = AgentDeps & {
   captureStarts: number;
   stopped: boolean;
   api: AgentDeps['api'] & { failWith(error: Error | { status: number } | null): void };
+  capture: AgentDeps['capture'] & { renderPreview: jest.Mock };
 };
 
-function makeDeps(overrides: Partial<AgentDeps> = {}): TestDeps {
+function makeDeps(
+  overrides: Partial<AgentDeps> = {},
+  // Merged into `capture` rather than replacing it: a test that only wants to
+  // pin isRunning must not lose start, stop and upload along with it.
+  captureOverrides: Partial<AgentDeps['capture']> = {},
+): TestDeps {
   const posted: { path: string; body: any }[] = [];
   let failure: Error | { status: number } | null = null;
   let captureStarts = 0;
@@ -42,9 +48,11 @@ function makeDeps(overrides: Partial<AgentDeps> = {}): TestDeps {
         stopped = true;
       }),
       upload: jest.fn(async () => ({ objects: 4, bytes: 1234, verified: true })),
+      renderPreview: jest.fn(async () => ({ artifacts: [], sourcePath: 'local' as const })),
       isRunning: () => captureStarts > 0 && !stopped,
       states: () => [],
       currentWindow: () => 'nvim',
+      ...captureOverrides,
     },
 
     clock: {
@@ -309,5 +317,123 @@ describe('the upload command', () => {
 
     expect(deps.capture.upload).not.toHaveBeenCalled();
     expect(deps.posted.find((p) => p.body?.reason === 'no_upload_prefix')).toBeDefined();
+  });
+});
+
+describe('render-preview', () => {
+  const command = {
+    command_id: 'c1',
+    type: 'render-preview' as const,
+    session_id: 's1',
+    payload: {
+      prefix: 'sessions/2026/09/07/s1',
+      audioSourceRefs: ['jabra', 'usb1', 'usb2'],
+    },
+  };
+
+  const artifacts = [
+    { kind: 'video', sourceRef: null, objectKey: 'p/preview/proxy.mp4', bytes: 529020, durationMs: 87837 },
+    { kind: 'audio', sourceRef: 'jabra', objectKey: 'p/preview/audio-jabra.m4a', bytes: 23487, durationMs: 87830, meanDb: -91, maxDb: -91 },
+    { kind: 'audio', sourceRef: 'usb1', objectKey: 'p/preview/audio-usb1.m4a', bytes: 24087, durationMs: 87884, meanDb: -91, maxDb: -91 },
+    { kind: 'audio', sourceRef: 'usb2', objectKey: 'p/preview/audio-usb2.m4a', bytes: 282122, durationMs: 87883, meanDb: -57.2, maxDb: -20.3 },
+  ];
+
+  it('refuses to render while a recording is running', async () => {
+    // A recording is unrepeatable; a render is always repeatable. When they
+    // contend for GPU and disk the render loses, and that priority is
+    // enforced here rather than left to timing.
+    const deps = makeDeps({}, { isRunning: () => true });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command as never);
+
+    expect(deps.capture.renderPreview).not.toHaveBeenCalled();
+    expect(deps.api.post).toHaveBeenCalledWith(
+      '/api/sessions/s1/preview-complete',
+      expect.objectContaining({ state: 'deferred', reason: 'capture_running' }),
+    );
+  });
+
+  it('renders every audio source, not only the loudest', async () => {
+    // The owner uses different headsets across sessions, so which source
+    // carried signal varies. Rendering one would leave the right microphone
+    // unreachable, and it would fail silently -- a preview that plays some
+    // audio looks like it is working.
+    const deps = makeDeps({}, { isRunning: () => false });
+    deps.capture.renderPreview.mockResolvedValue({ artifacts, sourcePath: 'local' });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command as never);
+
+    expect(deps.capture.renderPreview).toHaveBeenCalledWith(
+      's1',
+      'sessions/2026/09/07/s1',
+      ['jabra', 'usb1', 'usb2'],
+    );
+    const posted = (deps.api.post as jest.Mock).mock.calls.at(-1)![1] as any;
+    expect(posted.artifacts.filter((a: { kind: string }) => a.kind === 'audio')).toHaveLength(3);
+  });
+
+  it('reports which source path it read from', async () => {
+    const deps = makeDeps({}, { isRunning: () => false });
+    deps.capture.renderPreview.mockResolvedValue({ artifacts, sourcePath: 'storage' });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command as never);
+
+    expect(deps.api.post).toHaveBeenCalledWith(
+      '/api/sessions/s1/preview-complete',
+      expect.objectContaining({ state: 'ready', source_path: 'storage' }),
+    );
+  });
+
+  it('reports a failed render without touching anything else', async () => {
+    const deps = makeDeps({}, { isRunning: () => false });
+    deps.capture.renderPreview.mockRejectedValue(new Error('ffmpeg died'));
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command as never);
+
+    expect(deps.api.post).toHaveBeenCalledWith(
+      '/api/sessions/s1/preview-complete',
+      expect.objectContaining({ state: 'failed', reason: 'render_failed' }),
+    );
+    expect(deps.stopped).toBe(false);
+  });
+
+  it('fails rather than guessing when the command carries no prefix', async () => {
+    const deps = makeDeps({}, { isRunning: () => false });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle({ ...command, payload: {} } as never);
+
+    expect(deps.capture.renderPreview).not.toHaveBeenCalled();
+    expect(deps.api.post).toHaveBeenCalledWith(
+      '/api/sessions/s1/preview-complete',
+      expect.objectContaining({ state: 'failed', reason: 'no_prefix' }),
+    );
+  });
+
+  it('queues the report for redelivery when the API is unreachable', async () => {
+    // The render already ran and its objects are in the bucket. Losing the
+    // report would leave the row rendering forever with a finished proxy
+    // sitting behind it.
+    const deps = makeDeps({}, { isRunning: () => false });
+    deps.capture.renderPreview.mockResolvedValue({ artifacts, sourcePath: 'local' });
+    deps.api.failWith(new Error('connection refused'));
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+
+    await agent.handle(command as never);
+
+    expect(agent.hasPending()).toBe(true);
+  });
+
+  it('does not let a recording start be blocked by a render already refused', async () => {
+    // The refusal path must be inert: it touches no capture state.
+    const deps = makeDeps({}, {});
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 20 });
+    await agent.handle(command as never);
+    await prepareAndStart(agent, 's2');
+    expect(deps.captureStarts).toBe(1);
   });
 });

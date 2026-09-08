@@ -9,6 +9,14 @@ import { checkClock } from './clock';
 import { loadConfig } from './config';
 import { httpClient, loadCredentials } from './vault';
 import { Uploader, s3Client } from './upload/uploader';
+import {
+  cleanWorkDir,
+  fileBytes,
+  localTrackSegments,
+  PreviewRenderer,
+  probeDurationMs,
+  runFfmpeg,
+} from './preview/renderer';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -125,6 +133,76 @@ async function main(): Promise<void> {
             `uploaded ${result.objects} objects (${result.bytes} bytes), verified=${result.verified}`,
           );
           return { objects: result.objects, bytes: result.bytes, verified: result.verified };
+        },
+        /**
+         * Renders the preview set for a stored session.
+         *
+         * Runs here rather than in the API pod, which has no /dev/dri, no
+         * ffmpeg and 500m of CPU. Strictly additive on storage: it writes new
+         * objects under `<prefix>/preview/` and deletes nothing anywhere. Its
+         * only scratch space is a temporary directory it creates and removes
+         * itself, never the session directory.
+         */
+        async renderPreview(sessionId, prefix, audioSourceRefs) {
+          const host = hostname();
+          const s3 = s3Client({
+            endpoint: credentials.minio.endpoint,
+            accessKeyId: credentials.minio.accessKeyId,
+            secretAccessKey: credentials.minio.secretAccessKey,
+            bucket: credentials.minio.bucket,
+          });
+          const uploader = new Uploader(s3, credentials.minio.bucket);
+          const workDir = join(config.recordingDir, '.preview-work', sessionId);
+
+          // The screen track directory is discovered rather than assumed: the
+          // display name is part of it and varies by host.
+          const sessionDir = join(config.recordingDir, sessionId, host);
+          let screenTrackDir = 'screen';
+          try {
+            const found = (await readdir(sessionDir)).find((name) => name.startsWith('screen-'));
+            if (found) screenTrackDir = found;
+          } catch {
+            // Local media is gone; the storage path resolves the name below.
+          }
+          if (screenTrackDir === 'screen') {
+            const keys = await s3.list(`${prefix}/${host}/`);
+            const match = keys.find((key) => key.includes('/screen-'));
+            if (match) screenTrackDir = match.split(`${prefix}/${host}/`)[1].split('/')[0];
+          }
+
+          const renderer = new PreviewRenderer({
+            run: (args) => runFfmpeg(args),
+            localSegments: (id, trackDir) =>
+              localTrackSegments(config.recordingDir, id, host, trackDir),
+            async fetchSegments(objectPrefix, trackDir, into) {
+              const keys = await s3.list(`${objectPrefix}/${host}/${trackDir}/`);
+              const paths: string[] = [];
+              for (const key of keys) {
+                const name = key.split('/').pop();
+                if (!name || !name.startsWith('seg-')) continue;
+                const to = join(into, name);
+                await s3.get(key, to);
+                paths.push(to);
+              }
+              return paths;
+            },
+            async upload(path, key) {
+              const bytes = await fileBytes(path);
+              await uploader.uploadFile(path, key, bytes);
+              return bytes;
+            },
+            durationMs: probeDurationMs,
+            workDir,
+            onProgress: (message) => console.log(`preview ${sessionId}: ${message}`),
+          });
+
+          try {
+            return await renderer.render(sessionId, prefix, audioSourceRefs, screenTrackDir);
+          } finally {
+            // Removes only the renderer's own scratch directory. Session media
+            // is never touched by anything in this path.
+            await cleanWorkDir(workDir);
+          }
         },
         isRunning: () => session?.isRunning() ?? false,
         states: () => session?.states() ?? [],

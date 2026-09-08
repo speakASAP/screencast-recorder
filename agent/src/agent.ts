@@ -2,9 +2,20 @@ import { t0Missed, waitUntil } from './clock';
 
 export interface Command {
   command_id: string;
-  type: 'prepare' | 'start' | 'stop' | 'abort' | 'upload';
+  type: 'prepare' | 'start' | 'stop' | 'abort' | 'upload' | 'render-preview';
   session_id: string;
   payload: Record<string, any>;
+}
+
+/** One rendered preview object, as reported back to the API. */
+export interface RenderedArtifact {
+  kind: 'video' | 'audio';
+  sourceRef: string | null;
+  objectKey: string;
+  bytes: number;
+  durationMs: number | null;
+  meanDb?: number;
+  maxDb?: number;
 }
 
 export interface AgentDeps {
@@ -20,6 +31,16 @@ export interface AgentDeps {
     currentWindow(): string | null;
     /** Uploads a stopped session under the given prefix and verifies readback. */
     upload(sessionId: string, prefix: string): Promise<{ objects: number; bytes: number; verified: boolean }>;
+    /**
+     * Renders the preview set for a stored session: a silent video proxy plus
+     * one audio proxy per capture source. Read-only on session media -- it
+     * writes new objects under `<prefix>/preview/` and deletes nothing.
+     */
+    renderPreview(
+      sessionId: string,
+      prefix: string,
+      audioSourceRefs: string[],
+    ): Promise<{ artifacts: RenderedArtifact[]; sourcePath: 'local' | 'storage' }>;
   };
   clock: {
     check(): Promise<{ synchronised: boolean; offset_ms: number; source: string }>;
@@ -77,6 +98,8 @@ export class Agent {
         return this.abort();
       case 'upload':
         return this.upload(command);
+      case 'render-preview':
+        return this.renderPreview(command);
       default:
         return undefined;
     }
@@ -246,6 +269,76 @@ export class Agent {
       await this.handleApiFailure(error);
       // Queue rather than drop: the operator's view should catch up when the
       // controller returns, and progress is the only evidence a session is live.
+      this.pending.push({ path, body: payload });
+    }
+  }
+
+  /**
+   * Renders the preview set: a silent video proxy plus one audio proxy per
+   * capture source.
+   *
+   * Never runs while capture is live. A recording cannot be repeated and a
+   * render always can, so on contention the render defers -- and the API is
+   * told, so the operator sees "waiting for the recording to finish" rather
+   * than a request that vanished.
+   *
+   * Every audio source is rendered, not just the loudest: the owner uses
+   * different headsets across sessions, so picking one would sometimes strand
+   * the microphone that actually captured the commentary.
+   *
+   * Strictly read-only on session media. It writes only new objects under
+   * `preview/` and has no delete path anywhere.
+   */
+  private async renderPreview(command: Command): Promise<void> {
+    if (this.deps.capture.isRunning()) {
+      await this.reportPreview(command.session_id, {
+        state: 'deferred',
+        reason: 'capture_running',
+      });
+      return;
+    }
+
+    const prefix = command.payload.prefix as string | undefined;
+    if (!prefix) {
+      // Guessing a prefix would write preview objects under the wrong session.
+      await this.reportPreview(command.session_id, { state: 'failed', reason: 'no_prefix' });
+      return;
+    }
+
+    try {
+      const result = await this.deps.capture.renderPreview(
+        command.session_id,
+        prefix,
+        (command.payload.audioSourceRefs as string[] | undefined) ?? [],
+      );
+      await this.reportPreview(command.session_id, {
+        state: 'ready',
+        artifacts: result.artifacts,
+        source_path: result.sourcePath,
+      });
+    } catch (error) {
+      // Inert failure: nothing was modified, so a retry is always safe. A
+      // partial set is a failure and never a ready preview -- objects already
+      // written stay put, because nothing here deletes, and a retry
+      // overwrites them.
+      await this.reportPreview(command.session_id, {
+        state: 'failed',
+        reason: 'render_failed',
+        detail: (error as Error).message,
+      });
+    }
+  }
+
+  private async reportPreview(sessionId: string, body: Record<string, unknown>): Promise<void> {
+    const path = `/api/sessions/${sessionId}/preview-complete`;
+    const payload = { agent_id: this.config.agentId, ...body };
+    try {
+      await this.deps.api.post(path, payload);
+    } catch (error) {
+      await this.handleApiFailure(error);
+      // The render already ran and its objects are in the bucket. Dropping
+      // the report would leave the row rendering forever with a finished
+      // proxy sitting behind it.
       this.pending.push({ path, body: payload });
     }
   }

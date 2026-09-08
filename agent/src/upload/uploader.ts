@@ -1,10 +1,21 @@
-import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { createReadStream } from 'node:fs';
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 
 export interface S3Like {
   head(key: string): Promise<{ contentLength: number } | null>;
   put(key: string, path: string, bytes: number): Promise<void>;
+  /** Keys under a prefix, sorted. Used by preview's storage fallback. */
+  list(prefix: string): Promise<string[]>;
+  /** Downloads one object to a local path. Used by preview's storage fallback. */
+  get(key: string, toPath: string): Promise<void>;
 }
 
 export interface ExpectedObject {
@@ -138,6 +149,32 @@ export function s3Client(config: {
       } catch {
         return null;
       }
+    },
+    async list(prefix) {
+      const keys: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await client.send(
+          new ListObjectsV2Command({
+            Bucket: config.bucket,
+            Prefix: prefix,
+            ContinuationToken: token,
+          }),
+        );
+        for (const object of page.Contents ?? []) {
+          if (object.Key) keys.push(object.Key);
+        }
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token);
+      return keys.sort();
+    },
+    async get(key, toPath) {
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: config.bucket, Key: key }),
+      );
+      const body = response.Body as NodeJS.ReadableStream | undefined;
+      if (!body) throw new Error(`object ${key} has no body`);
+      await pipeline(body, createWriteStream(toPath));
     },
     async put(key, path) {
       const { size } = await stat(path);
