@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Manifest } from '../sessions/entities/manifest.entity';
 import { Session } from '../sessions/entities/session.entity';
@@ -25,7 +25,13 @@ import { SessionPreview } from './session-preview.entity';
     AuthModule,
   ],
   controllers: [PreviewController, PreviewAgentController],
-  providers: [PreviewService],
+  // Logger is listed because AgentRoleGuard takes one as its third constructor
+  // argument, and AuthModule exports the guard without exporting Logger. Nest
+  // resolves that argument in the CONSUMING module's context, so every module
+  // using the guard must provide it -- SessionsModule already does. Without
+  // this the container fails at boot, not in any unit test, and the readiness
+  // probe then leaves the previous pod serving while the new one crash-loops.
+  providers: [PreviewService, Logger],
   exports: [PreviewService],
 })
 export class PreviewModule {}
