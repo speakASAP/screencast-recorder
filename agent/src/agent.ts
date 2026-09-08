@@ -9,7 +9,7 @@ export interface Command {
 
 /** One rendered preview object, as reported back to the API. */
 export interface RenderedArtifact {
-  kind: 'video' | 'audio';
+  kind: 'video' | 'audio' | 'peaks';
   sourceRef: string | null;
   objectKey: string;
   bytes: number;

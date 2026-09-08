@@ -5,8 +5,10 @@ import { RenderedArtifact } from '../agent';
 import {
   buildAudioProxyArgs,
   buildConcatList,
+  buildPeaksArgs,
   buildVideoProxyArgs,
   buildVolumedetectArgs,
+  peaksFromPcm,
 } from './render';
 
 /**
@@ -20,6 +22,14 @@ import {
 export interface RendererDeps {
   /** Runs ffmpeg and resolves with its stderr, or rejects on a non-zero exit. */
   run(args: string[]): Promise<string>;
+  /**
+   * Runs ffmpeg and resolves with its stdout as bytes.
+   *
+   * Separate from `run` because PCM is binary: decoding it through the string
+   * path would corrupt every sample that happens to be invalid UTF-8, which is
+   * most of them.
+   */
+  runBinary(args: string[]): Promise<Buffer>;
   /** Absolute paths of one track's segments, oldest first; empty when absent. */
   localSegments(sessionId: string, trackDir: string): Promise<string[]>;
   /** Downloads a track's segments from storage; used when local media is gone. */
@@ -55,6 +65,16 @@ export function readLevels(stderr: string): { meanDb: number; maxDb: number } {
   }
   return { meanDb: meanDb ?? maxDb!, maxDb: maxDb ?? meanDb! };
 }
+
+/**
+ * Waveform resolution.
+ *
+ * A lane is at most ~1200 CSS pixels wide, so more buckets than this cannot be
+ * drawn; fewer would visibly step on a wide screen. Fixed rather than derived
+ * from duration so every lane in a session shares one horizontal scale and the
+ * same instant lines up across tracks.
+ */
+export const PEAK_BUCKETS = 1200;
 
 export class PreviewRenderer {
   constructor(private readonly deps: RendererDeps) {}
@@ -129,6 +149,23 @@ export class PreviewRenderer {
         meanDb: levels.meanDb,
         maxDb: levels.maxDb,
       });
+
+      // Computed here, once, rather than in the browser on every open: a
+      // four-hour proxy would otherwise be downloaded and decoded in full
+      // before the console could draw a single lane.
+      this.deps.onProgress?.(`extracting peaks for ${sourceRef}`);
+      const pcm = await this.deps.runBinary(buildPeaksArgs(list));
+      const peaksPath = join(this.deps.workDir, `peaks-${slug}.json`);
+      await writeFile(peaksPath, JSON.stringify({ buckets: peaksFromPcm(pcm, PEAK_BUCKETS) }));
+
+      const peaksKey = `${prefix}/preview/peaks-${slug}.json`;
+      artifacts.push({
+        kind: 'peaks',
+        sourceRef,
+        objectKey: peaksKey,
+        bytes: await this.deps.upload(peaksPath, peaksKey),
+        durationMs: null,
+      });
     }
 
     this.deps.onProgress?.('render complete');
@@ -172,6 +209,30 @@ export function runFfmpeg(args: string[], binary = 'ffmpeg'): Promise<string> {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve(stderr);
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`));
+    });
+  });
+}
+
+/**
+ * Spawns ffmpeg and collects stdout as bytes.
+ *
+ * The binary twin of `runFfmpeg`, for PCM: accumulating chunks into a string
+ * would corrupt every sample that is not valid UTF-8. stderr is still kept, so
+ * a failure carries ffmpeg's own message rather than a bare exit code.
+ */
+export function runFfmpegBinary(args: string[], binary = 'ffmpeg'): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args);
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(Buffer.concat(chunks));
       else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`));
     });
   });

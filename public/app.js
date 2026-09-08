@@ -20,6 +20,8 @@ const state = {
   timeline: null,
   audioBySource: new Map(),
   playingSource: null,
+  peaksBySource: new Map(),
+  playheadTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -501,6 +503,7 @@ async function refreshPreviewStatus(sessionId, mayRequest) {
       ? `Proxy rendered from ${status.sourcePath} files.`
       : 'Proxy ready.';
     attachMedia(sessionId, status);
+    void drawWaveforms(sessionId, status);
     return;
   }
 
@@ -697,11 +700,148 @@ function drawTimeline(timeline) {
   canvas.onclick = (event) => {
     const rect = canvas.getBoundingClientRect();
     const ratio = (event.clientX - rect.left) / rect.width;
-    const video = $('preview-video');
-    // Seek the video; the active audio element follows through syncAudio.
-    video.currentTime = (ratio * timeline.durationMs) / 1000;
-    syncAudio();
+    // Same seek path as the waveform lanes, so a click on either moves
+    // everything: video, the audible source, and every cursor.
+    seekAll(ratio);
   };
+}
+
+// ------------------------------------------------------------------ waveforms
+
+/** Lane height in CSS pixels. Tall enough to read, short enough to stack many. */
+const LANE_HEIGHT = 56;
+
+/**
+ * Draws one lane per audio source, stacked on a shared time scale.
+ *
+ * The peaks are fetched, not computed here: the agent already measured them
+ * during the render pass, so a four-hour session draws immediately instead of
+ * downloading and decoding every proxy in the browser.
+ *
+ * A source whose waveform is missing still gets a lane. Sessions rendered
+ * before peaks existed have proxies but no measurement, and drawing nothing
+ * would read as a silent microphone rather than an unmeasured one.
+ */
+async function drawWaveforms(sessionId, status) {
+  const holder = $('preview-waveforms');
+  holder.innerHTML = '';
+  state.peaksBySource.clear();
+
+  if (!status.audioSources.length) {
+    $('preview-waveform-note').textContent = 'This session captured no audio sources.';
+    return;
+  }
+
+  $('preview-waveform-note').textContent = 'Click any lane to move every track to that moment.';
+
+  for (const source of status.audioSources) {
+    const lane = document.createElement('div');
+    lane.className = 'wave-lane';
+
+    const label = document.createElement('span');
+    label.className = 'wave-label';
+    label.textContent = source.sourceRef;
+
+    const canvas = document.createElement('canvas');
+    canvas.height = LANE_HEIGHT;
+    canvas.className = 'wave-canvas';
+    canvas.dataset.sourceRef = source.sourceRef;
+
+    lane.append(label, canvas);
+    holder.append(lane);
+
+    // Each lane seeks every track, so the operator can click the waveform
+    // they are reading rather than hunting for the video scrubber.
+    canvas.onclick = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      seekAll((event.clientX - rect.left) / rect.width);
+    };
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${sessionId}/preview/peaks/${encodeURIComponent(source.sourceRef)}`,
+      );
+      if (!response.ok) throw new Error(String(response.status));
+      const { buckets } = await response.json();
+      state.peaksBySource.set(source.sourceRef, buckets);
+    } catch {
+      // Left unset: paintLane draws the "not measured" state for this source
+      // and every other lane still works.
+      state.peaksBySource.set(source.sourceRef, null);
+    }
+
+    paintLane(canvas);
+  }
+
+  startPlayhead();
+}
+
+/** Paints one lane: its waveform, or why there is none, plus the playhead. */
+function paintLane(canvas) {
+  const buckets = state.peaksBySource.get(canvas.dataset.sourceRef);
+  canvas.width = canvas.clientWidth || 900;
+  const ctx = canvas.getContext('2d');
+  const { width, height } = canvas;
+  const middle = height / 2;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#f2f3f5';
+  ctx.fillRect(0, 0, width, height);
+
+  if (!buckets) {
+    ctx.fillStyle = '#9aa0a6';
+    ctx.fillText('No waveform: this session was rendered before waveforms were measured.', 8, middle);
+    drawPlayhead(ctx, width, height);
+    return;
+  }
+
+  ctx.fillStyle = '#4c78a8';
+  for (let x = 0; x < width; x += 1) {
+    // Peaks are a fixed count; map pixels onto them so every lane shares one
+    // horizontal scale regardless of its own duration.
+    const peak = buckets[Math.min(buckets.length - 1, Math.floor((x / width) * buckets.length))];
+    const half = Math.max(1, peak * middle);
+    ctx.fillRect(x, middle - half, 1, half * 2);
+  }
+
+  drawPlayhead(ctx, width, height);
+}
+
+/** The shared cursor. Same fraction on every lane, so the eye can compare. */
+function drawPlayhead(ctx, width, height) {
+  const video = $('preview-video');
+  if (!video.duration) return;
+  const x = (video.currentTime / video.duration) * width;
+  ctx.fillStyle = '#d1435b';
+  ctx.fillRect(x, 0, 2, height);
+}
+
+/** Moves video, the audible source and every lane cursor to one instant. */
+function seekAll(ratio) {
+  const video = $('preview-video');
+  if (!video.duration) return;
+  video.currentTime = Math.max(0, Math.min(1, ratio)) * video.duration;
+  syncAudio();
+  repaintLanes();
+}
+
+function repaintLanes() {
+  for (const canvas of document.querySelectorAll('canvas.wave-canvas')) paintLane(canvas);
+}
+
+/**
+ * Repaints the cursor while playing.
+ *
+ * On a timer rather than `timeupdate`: that event fires about four times a
+ * second, which is visibly jerky for a cursor the operator is reading against
+ * a waveform.
+ */
+function startPlayhead() {
+  if (state.playheadTimer) clearInterval(state.playheadTimer);
+  state.playheadTimer = setInterval(() => {
+    const video = $('preview-video');
+    if (!video.paused && !video.seeking) repaintLanes();
+  }, 100);
 }
 
 // ----------------------------------------------------------------------- boot

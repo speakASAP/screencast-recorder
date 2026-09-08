@@ -52,3 +52,28 @@ describe('every element the script addresses by id exists in the page', () => {
     expect(html).toContain(`id="${id}"`);
   });
 });
+
+describe('the waveform lanes are wired to the shared playhead', () => {
+  it('gives every lane a click handler', () => {
+    // The failure this guards is the same one that shipped before: markup
+    // rendered, nothing bound, and a lane that looks interactive but is not.
+    expect(app).toMatch(/canvas\.onclick\s*=/);
+  });
+
+  it('seeks through one path from both the lanes and the activity canvas', () => {
+    // Two seek implementations would drift: clicking a waveform and clicking
+    // the activity timeline would land on different instants.
+    expect(app).toContain('function seekAll(');
+    expect([...app.matchAll(/seekAll\(/g)]).toHaveLength(3);
+  });
+
+  it('has a container in the page for the lanes to be written into', () => {
+    expect(html).toContain('id="preview-waveforms"');
+  });
+
+  it('fetches precomputed peaks rather than decoding audio in the browser', () => {
+    // Decoding a four-hour proxy client-side is the thing this design avoids.
+    expect(app).toContain('/preview/peaks/');
+    expect(app).not.toContain('AudioContext');
+  });
+});

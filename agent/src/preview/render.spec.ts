@@ -1,8 +1,10 @@
 import {
   buildAudioProxyArgs,
   buildConcatList,
+  buildPeaksArgs,
   buildVideoProxyArgs,
   buildVolumedetectArgs,
+  peaksFromPcm,
 } from './render';
 
 describe('buildVideoProxyArgs', () => {
@@ -87,5 +89,64 @@ describe('buildVolumedetectArgs', () => {
     // would make every source measure as unparseable, and parseVolumedetect
     // raises on that rather than reporting silence.
     expect(buildVolumedetectArgs('/a.txt').join(' ')).toContain('-v info');
+  });
+});
+
+describe('buildPeaksArgs', () => {
+  const args = buildPeaksArgs('/a.txt').join(' ');
+
+  it('decodes to raw mono PCM on stdout, writing no file', () => {
+    // The peaks are computed in one pass over the same concat list the audio
+    // proxy uses, so the waveform describes exactly the file the operator
+    // hears. Writing to stdout avoids a temp file per source.
+    expect(args).toContain('-f s16le');
+    expect(args).toContain('-ac 1');
+    expect(args).toContain('pipe:1');
+  });
+
+  it('downsamples hard, because only the envelope is drawn', () => {
+    // A waveform lane is a few thousand pixels at most. Decoding 4 hours at
+    // 44.1 kHz to draw 1200 buckets is wasted CPU and memory.
+    expect(args).toContain('-ar 8000');
+  });
+});
+
+describe('peaksFromPcm', () => {
+  /** Builds signed 16-bit little-endian PCM from plain sample values. */
+  const pcm = (samples: number[]): Buffer => {
+    const buffer = Buffer.alloc(samples.length * 2);
+    samples.forEach((value, index) => buffer.writeInt16LE(value, index * 2));
+    return buffer;
+  };
+
+  it('reduces samples to the requested number of buckets', () => {
+    const peaks = peaksFromPcm(pcm(new Array(1000).fill(16384)), 10);
+    expect(peaks).toHaveLength(10);
+  });
+
+  it('reports each bucket peak as a 0..1 fraction of full scale', () => {
+    // Half of 32767, so a lane drawn from this is half height.
+    const peaks = peaksFromPcm(pcm(new Array(100).fill(16384)), 1);
+    expect(peaks[0]).toBeCloseTo(0.5, 1);
+  });
+
+  it('takes the absolute peak, so a negative swing is not drawn as silence', () => {
+    // Speech is symmetric around zero; averaging raw signed samples would
+    // cancel to nothing and render a talking track as a flat line.
+    const peaks = peaksFromPcm(pcm([-32767, -32767, -32767, -32767]), 1);
+    expect(peaks[0]).toBeCloseTo(1, 1);
+  });
+
+  it('returns silence rather than throwing on an empty stream', () => {
+    // A source that produced no audio is a fact to draw, not a render failure.
+    expect(peaksFromPcm(Buffer.alloc(0), 4)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('never returns a bucket outside 0..1', () => {
+    const peaks = peaksFromPcm(pcm([-32768, 32767, 0, 12345]), 2);
+    for (const peak of peaks) {
+      expect(peak).toBeGreaterThanOrEqual(0);
+      expect(peak).toBeLessThanOrEqual(1);
+    }
   });
 });

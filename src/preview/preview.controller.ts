@@ -66,6 +66,22 @@ export class PreviewController {
     res.redirect(302, await this.preview.audioUrl(id, sourceRef));
   }
 
+  /**
+   * One source's waveform, precomputed at render time.
+   *
+   * The console draws a lane per source from this instead of decoding the
+   * audio itself: a four-hour proxy would otherwise be downloaded in full
+   * before a single lane appeared.
+   */
+  @Get(':id/preview/peaks/:sourceRef')
+  async peaks(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('sourceRef') sourceRef: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    res.redirect(302, await this.preview.peaksUrl(id, sourceRef));
+  }
+
   @Get(':id/timeline')
   timeline(@Param('id', ParseUUIDPipe) id: string, @Query('buckets') buckets?: string) {
     const requested = Number(buckets);

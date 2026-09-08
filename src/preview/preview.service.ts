@@ -209,6 +209,29 @@ export class PreviewService {
     return this.storage.presignGet(artifact.objectKey, MEDIA_URL_EXPIRY_SECONDS);
   }
 
+  /**
+   * The waveform for one source, as JSON rather than audio.
+   *
+   * Served the same way as the proxy it describes -- a presigned redirect, so
+   * the API never becomes the data path -- because the console fetches one per
+   * lane when a session is opened.
+   */
+  async peaksUrl(sessionId: string, sourceRef: string): Promise<string> {
+    const preview = await this.requireReadyPreview(sessionId);
+    const artifact = preview.artifacts.find(
+      (a) => a.kind === 'peaks' && a.sourceRef === sourceRef,
+    );
+    if (!artifact) {
+      // Sessions rendered before peaks existed have proxies but no waveform.
+      // Saying so lets the console draw a flat lane with a note, rather than
+      // showing a silent-looking track that was never measured.
+      throw new NotFoundException(
+        `Session ${sessionId} has no rendered waveform for source ${sourceRef}`,
+      );
+    }
+    return this.storage.presignGet(artifact.objectKey, MEDIA_URL_EXPIRY_SECONDS);
+  }
+
   /** Records which source the operator chose to listen to. */
   async selectSource(sessionId: string, sourceRef: string): Promise<PreviewStatus> {
     await this.requireSession(sessionId);

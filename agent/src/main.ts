@@ -16,6 +16,7 @@ import {
   PreviewRenderer,
   probeDurationMs,
   runFfmpeg,
+  runFfmpegBinary,
 } from './preview/renderer';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -172,6 +173,7 @@ async function main(): Promise<void> {
 
           const renderer = new PreviewRenderer({
             run: (args) => runFfmpeg(args),
+            runBinary: (args) => runFfmpegBinary(args),
             localSegments: (id, trackDir) =>
               localTrackSegments(config.recordingDir, id, host, trackDir),
             async fetchSegments(objectPrefix, trackDir, into) {

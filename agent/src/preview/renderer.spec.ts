@@ -9,6 +9,12 @@ async function makeRenderer(overrides: Partial<RendererDeps> = {}) {
   const workDir = await mkdtemp(join(tmpdir(), 'render-'));
   const deps: RendererDeps = {
     run: jest.fn(async () => LEVELS),
+    // 8000 mono samples of half-scale tone: enough for a real bucket reduction.
+    runBinary: jest.fn(async () => {
+      const buffer = Buffer.alloc(8000 * 2);
+      for (let i = 0; i < 8000; i += 1) buffer.writeInt16LE(16384, i * 2);
+      return buffer;
+    }),
     localSegments: jest.fn(async () => ['/rec/seg-00000.mp4']),
     fetchSegments: jest.fn(async () => ['/fetched/seg-00000.mp4']),
     upload: jest.fn(async () => 1234),
@@ -29,7 +35,42 @@ describe('PreviewRenderer.render', () => {
 
     expect(result.artifacts.filter((a) => a.kind === 'audio')).toHaveLength(3);
     expect(result.artifacts.filter((a) => a.kind === 'video')).toHaveLength(1);
-    expect(result.artifacts.map((a) => a.sourceRef)).toEqual([null, 'jabra', 'usb1', 'usb2']);
+    // Each source contributes its proxy and then its peaks file, in that
+    // order, after the single video artifact.
+    expect(result.artifacts.map((a) => `${a.kind}:${a.sourceRef}`)).toEqual([
+      'video:null',
+      'audio:jabra',
+      'peaks:jabra',
+      'audio:usb1',
+      'peaks:usb1',
+      'audio:usb2',
+      'peaks:usb2',
+    ]);
+  });
+
+  it('uploads a peaks file for every audio source', async () => {
+    // Precomputed once at render time so the console draws a four-hour
+    // session without downloading and decoding the audio in the browser.
+    const { renderer } = await makeRenderer();
+    const result = await renderer.render('s1', 'p', ['jabra', 'usb1'], 'screen-HDMI-A-0');
+
+    const peaks = result.artifacts.filter((a) => a.kind === 'peaks');
+    expect(peaks).toHaveLength(2);
+    expect(peaks.map((a) => a.sourceRef)).toEqual(['jabra', 'usb1']);
+    expect(peaks[0].objectKey).toMatch(/peaks-jabra\.json$/);
+  });
+
+  it('keeps a peaks file beside the proxy it describes', async () => {
+    // Same slug, same prefix: the console pairs them by source without a
+    // second lookup, and a mismatch would draw one source's waveform under
+    // another's name.
+    const { renderer } = await makeRenderer();
+    const result = await renderer.render('s1', 'p', ['jabra'], 'screen-HDMI-A-0');
+    const audio = result.artifacts.find((a) => a.kind === 'audio');
+    const peaks = result.artifacts.find((a) => a.kind === 'peaks');
+    expect(peaks!.objectKey.replace('peaks-', 'audio-').replace('.json', '.m4a')).toBe(
+      audio!.objectKey,
+    );
   });
 
   it('fails the whole render when one source has no segments', async () => {
@@ -94,7 +135,9 @@ describe('PreviewRenderer.render', () => {
     expect(messages).toEqual([
       'rendering the video proxy',
       'rendering audio for jabra',
+      'extracting peaks for jabra',
       'rendering audio for usb2',
+      'extracting peaks for usb2',
       'render complete',
     ]);
   });

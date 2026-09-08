@@ -131,3 +131,63 @@ export function buildVolumedetectArgs(concatListPath: string): string[] {
     '-',
   ];
 }
+
+/**
+ * Decodes one source to raw mono PCM for peak extraction.
+ *
+ * Reads the same concat list the audio proxy is built from, so the drawn
+ * waveform describes exactly the file the operator hears rather than a
+ * separately-assembled approximation.
+ *
+ * 8 kHz mono is far below speech fidelity, and deliberately so: nothing here
+ * is played back. A waveform lane is a few thousand pixels wide, so decoding a
+ * four-hour session at full rate would spend minutes of CPU to draw an
+ * envelope that 8 kHz already over-describes. Output goes to stdout because a
+ * temp file per source would be written once and read once.
+ */
+export function buildPeaksArgs(concatListPath: string): string[] {
+  return [
+    '-v', 'error',
+    '-f', 'concat',
+    '-safe', '0',
+    '-i', concatListPath,
+    '-vn',
+    '-f', 's16le',
+    '-acodec', 'pcm_s16le',
+    '-ac', '1',
+    '-ar', '8000',
+    'pipe:1',
+  ];
+}
+
+/** Full scale for signed 16-bit PCM. */
+const PCM_FULL_SCALE = 32767;
+
+/**
+ * Reduces raw PCM to one peak per bucket, each a 0..1 fraction of full scale.
+ *
+ * The peak is the maximum ABSOLUTE sample in the bucket, not the mean. Speech
+ * is symmetric around zero, so averaging signed samples cancels to roughly
+ * nothing and would draw a talking track as a flat line.
+ *
+ * An empty stream yields silence rather than an error: a source that captured
+ * nothing is a fact the operator needs drawn, and failing the whole render
+ * over it would lose the sources that did work.
+ */
+export function peaksFromPcm(pcm: Buffer, buckets: number): number[] {
+  const peaks = new Array<number>(buckets).fill(0);
+  const total = Math.floor(pcm.length / 2);
+  if (total === 0 || buckets <= 0) return peaks;
+
+  const perBucket = total / buckets;
+
+  for (let index = 0; index < total; index += 1) {
+    const bucket = Math.min(buckets - 1, Math.floor(index / perBucket));
+    // Math.abs of -32768 exceeds full scale by one; clamping keeps every
+    // bucket inside 0..1 so the drawing code never has to.
+    const sample = Math.min(Math.abs(pcm.readInt16LE(index * 2)), PCM_FULL_SCALE);
+    if (sample > peaks[bucket]) peaks[bucket] = sample;
+  }
+
+  return peaks.map((peak) => peak / PCM_FULL_SCALE);
+}

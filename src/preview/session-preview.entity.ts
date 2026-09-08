@@ -31,7 +31,12 @@ export function isLegalPreviewTransition(from: PreviewState, to: PreviewState): 
 
 /** One rendered object: the video proxy, or one source's audio proxy. */
 export interface PreviewArtifact {
-  kind: 'video' | 'audio';
+  /**
+   * `peaks` is a small JSON of waveform amplitudes for one audio source,
+   * written by the same render pass as that source's proxy so the console can
+   * draw a lane without decoding the audio itself.
+   */
+  kind: 'video' | 'audio' | 'peaks';
   /** Null for the video proxy, which carries no audio stream. */
   sourceRef: string | null;
   objectKey: string;

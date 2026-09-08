@@ -114,6 +114,15 @@
         <h3>Audio sources</h3>
         <div id="preview-sources"></div>
 
+        <!--
+          One lane per audio source, stacked on a shared horizontal time
+          scale so the same instant lines up across every track and the
+          activity timeline below. Clicking any lane seeks all of them.
+        -->
+        <h3>Waveforms</h3>
+        <div id="preview-waveforms"></div>
+        <p id="preview-waveform-note" class="note"></p>
+
         <h3>Activity</h3>
         <canvas id="preview-timeline" height="120"></canvas>
         <div id="preview-legend"></div>
