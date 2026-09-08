@@ -52,7 +52,7 @@ capture through runlayer or BPCP.
 | No secret in Git, logs or output | Vault only; key names documented, values never. Enforced by the pre-commit hook and by review. |
 | No premature deletion | Deletion requires S3 verification and operator preview; phase 1 deletes nothing automatically. |
 | `speakasap-records` untouched | Storage policy boundary, verified by denial. |
-| Canonical service identity | One Auth-signed RS256 principal per pair, minted only by `provision-service-token.js`. |
+| Canonical service identity | Follow `SERVICE_IDENTITY_CONSUMER_STANDARD.md`; local role `internal:screencast-recorder:agent`. |
 
 ## Sensitive-data handling
 

@@ -67,7 +67,7 @@ Preserved, with the mechanism for each:
 | No secret in Git, logs or output | All secrets live in Vault; key names only are documented. |
 | No premature deletion | Local media is deleted only after S3 verification *and* operator preview; phase 1 deletes nothing automatically. |
 | `speakasap-records` untouched | Enforced by storage policy, verified by a denial test, not by code convention. |
-| Canonical service identity | One Auth-signed RS256 principal per pair, minted only by the sanctioned script. |
+| Canonical service identity | Follow `SERVICE_IDENTITY_CONSUMER_STANDARD.md`; local role `internal:screencast-recorder:agent`. |
 
 ## Upstream and downstream links
 

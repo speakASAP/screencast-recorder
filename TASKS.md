@@ -9,43 +9,8 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Active
 
-- [ ] **Session preview: tasks 1-10 implemented, awaiting live verification.**
-  Plan: [`docs/superpowers/plans/2026-09-07-session-preview.md`](docs/superpowers/plans/2026-09-07-session-preview.md).
-  All code is committed and pushed: activity timeline, audio selection, the
-  `session_previews` entity and both migrations, presigned media URLs,
-  `PreviewService`, `PreviewController`, `PreviewAgentController`, the agent
-  renderer and its contention refusal, the `preview-complete` callback and
-  the console screen. 288 tests across 32 suites, green.
-
-  Verified against the real system so far:
-  - The ffmpeg arguments render a real 15.2-minute stored session: 65 MB of
-    4K source to a 4.4 MB proxy in 39.8s, probed at 960x540/10fps, `moov` at
-    byte 36 so faststart genuinely works, and audio/video durations agreeing
-    to within 1s.
-  - MinIO answers a presigned Range request with `206 Partial Content`,
-    `content-range: bytes 0-102399/3341393`, exactly 102400 bytes. Seeking
-    needs no CORS and no chunking, and the bucket was not modified.
-  - The API's and the agent's key slugging agree on all three real PipeWire
-    source refs of this host, and give each a distinct key.
-
-  Still to do (task 11): preview a session through the deployed console,
-  confirm all three audio sources play and that switching source does not
-  reload the video, verify the contention rule live by requesting a render
-  during a recording, and confirm nothing was deleted.
-
-  **Blocked on the deploy queue**: the pod still runs image `2415b96` while
-  HEAD is `f402ce6`. The queue is shared and had five services ahead. The
-  agent also needs restarting to pick up `render-preview` -- until both are
-  current, nothing above can be exercised end to end.
-
 ## Ready next
 
-- [ ] Session preview: play back the screen, audio and activity timeline of a
-  stored session. Design:
-  [`docs/superpowers/specs/2026-09-07-session-preview-design.md`](docs/superpowers/specs/2026-09-07-session-preview-design.md);
-  original prompt: `docs/superpowers/specs/2026-09-07-preview-prompt.md`.
-  Preview exists so the operator can see what was recorded; it is not a gate on
-  retention and authorises no deletion.
 - [ ] Phase 2 post-production: emit `session.stored`, then the BPCP-owned
   approval chain (edit -> preview -> owner approval -> YouTube -> owner
   approval for raw deletion).
@@ -64,6 +29,26 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   2026-09-06; the IPS planning gate and the pre-coding gate both pass.
 
 ## Completed
+
+- [x] **Session preview, delivered and validated 2026-09-08.** Deployed at
+  `screencast.alfares.cz` (image `e1c3540`), 293 tests across 34 suites.
+  A three-source session rendered end to end: all three audio proxies plus a
+  silent video proxy, levels separating the one microphone that carried signal
+  (-51.2 dB) from two at the digital-silence floor; `moov` at byte 36 so the
+  browser seeks over a presigned Range request without bucket CORS; the
+  contention rule refusing to render while capture runs; and the ten original
+  objects untouched. Evidence:
+  [`docs/12_validation/VAL-TASK-002-session-preview.md`](docs/12_validation/VAL-TASK-002-session-preview.md).
+  Browser playback — switching source mid-play without the video reloading,
+  and timeline seeking — is the remaining owner check.
+
+- [x] Three defects found by that validation and fixed: the pod crash-looped
+  because `PreviewModule` did not provide the `Logger` that `AgentRoleGuard`
+  takes (the readiness probe kept the old pod serving, so the deploy read as
+  successful); `migrationsRun` was never set, so no migration had ever run at
+  deploy and `selectedSourceRef` was missing from the live database; and this
+  repository had no `post-commit` hook, so none of its commits ever reached the
+  deploy queue.
 
 - [x] **Fixed: the activity tracker now counts keystrokes and clicks.** An
   XInput2 listener (`agent/src/activity/input-listener.ts`) feeds the existing

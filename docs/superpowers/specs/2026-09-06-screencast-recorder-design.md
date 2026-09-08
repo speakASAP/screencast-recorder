@@ -284,38 +284,22 @@ being careful.
   `screencast.alfares.cz`, with the application-scoped default role
   `app:screencast-recorder:user`. Without that exact role, a valid login fails
   after credential verification.
-- *Machine:* `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
-  role `internal:screencast-recorder:agent`, RS256, minted only via
-  `auth-microservice/scripts/provision-service-token.js`, per
-  `SERVICE_IDENTITY_CONSUMER_STANDARD.md`. Rotated before 90 days; acceptance is
-  a successful authenticated call, not expiry time or pod restart.
+- *Machine:* follow only
+  [`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
+  Local pair: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+  role `internal:screencast-recorder:agent`.
 
-**Agent credential delivery — Vault AppRole, no exception.**
-`SERVICE_IDENTITY_CONSUMER_STANDARD.md` closes with: *if an integration cannot
-meet this contract, stop and repair the integration; do not document an
-exception or alternative protocol.* Accordingly there is no exception here.
-
-ExternalSecret is the delivery mechanism for a **pod**. The agent has no pod, so
-it uses the ecosystem's established host-side path to the same Vault: **AppRole**,
-already in use by `allegro`, `aukro`, `bazos`, `flipflop` and `heureka`.
+**Agent credential delivery — Vault AppRole (no pod).**
+ExternalSecret delivers credentials to pods. The agent has no pod, so it uses
+the ecosystem host-side path to the same Vault path
+(`secret/prod/screencast-recorder`): **AppRole**, already used by `allegro`,
+`aukro`, `bazos`, `flipflop` and `heureka`.
 
 - The agent authenticates to Vault by AppRole. `role_id` sits in its config; the
   `secret_id` is delivered response-wrapped at enrollment.
-- The pair token `svc-screencast-agent--screencast-recorder` lives at
-  `secret/prod/screencast-recorder`, minted **only** by
-  `provision-service-token.js` run inside the auth pod.
-- The agent reads that token from Vault at startup and on rotation. It never
-  mints, never self-signs, and never holds a static credential file.
-- The API enforces `internal:screencast-recorder:agent` per route, denying and
-  error-logging any undecorated route.
-- Rotation happens before 90 days; the acceptance proof is a successful
-  authenticated call to the API, never `exp`, Secret synchronization or a pod
-  restart.
-
-This satisfies every clause of the standard: one Auth-signed RS256 principal per
-`(caller → target)` pair, correct identity and role shape, never
-`global:superadmin`, minted only by the sanctioned script, Vault-delivered,
-per-route enforcement, and call-based rotation proof.
+- The pair token is read from Vault at startup and on rotation. The agent never
+  mints or self-signs.
+- The API enforces `internal:screencast-recorder:agent` per route.
 
 ## Integration contract decisions
 

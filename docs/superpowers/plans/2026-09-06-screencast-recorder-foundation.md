@@ -19,7 +19,10 @@
 - **Secret values never appear** in Git, documentation, terminal output, logs, or commit messages. Key *names* only.
 - **Never touch `/srv/speakasap-records/speakasap-records/`** — ~618 GB of live lesson audio. Never `mount --bind` over `/srv/speakasap-records`.
 - On the host, `mc` is **Midnight Commander, not the MinIO client**. The real `mc` exists only at `/usr/bin/mc` inside the MinIO pod. Never invoke host `mc` for storage work.
-- Service identity follows `auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md` exactly: one Auth-signed RS256 principal per `(caller → target)` pair, identity `svc-<caller>--<target>@internal.alfares.cz`, role `internal:<target>:<least-privilege-role>`, never `global:superadmin`, minted **only** via `auth-microservice/scripts/provision-service-token.js`. The standard forbids documenting exceptions — if an integration cannot meet it, repair the integration.
+- Service identity follows only
+  `auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md`. Local pair for
+  this service: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+  role `internal:screencast-recorder:agent`. Do not document exceptions.
 - Every Vault key must have an explicit `data:` entry in `k8s/external-secret.yaml`. A Vault key absent from the ExternalSecret never reaches the pod **while ESO still reports `Synced`**.
 - Commits to `main` auto-deploy via the systemd deploy worker. Do not commit application code to `main` until Task 8.
 
@@ -589,7 +592,9 @@ Do not push `shared` without the owner's go-ahead; it is a widely consumed repos
 - The repository is a Git repo with the full harness, and the spec and plans survived scaffolding.
 - Postgres `screencast_recorder` exists with a role that is verified unable to read another service's database.
 - Bucket `screencast-sessions` exists; the runtime service account reads it and is **verified denied** on `speakasap-records`; nothing at runtime uses root.
-- Auth holds the user-facing application with `app:screencast-recorder:user`, and an RS256 service principal with `internal:screencast-recorder:agent`, minted only by `provision-service-token.js`.
+- Auth holds the user-facing application with `app:screencast-recorder:user`, and
+  a service principal with local role `internal:screencast-recorder:agent` per
+  `SERVICE_IDENTITY_CONSUMER_STANDARD.md`.
 - All nine Vault keys are present, each has an explicit ExternalSecret entry, and the Kubernetes Secret is verified to contain all nine by enumeration.
 - The AppRole reads only `secret/prod/screencast-recorder` and is verified denied elsewhere.
 - The planning gate passes and the catalog validator accepts the entry.

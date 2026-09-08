@@ -106,19 +106,17 @@ registered user-facing application `screencast-recorder`, whose
 application-scoped default role is `app:screencast-recorder:user`. Credentials
 are entered only at `auth.alfares.cz`.
 
-**Machine.** The agent calls the API with the pair-specific Auth-signed RS256
-token for `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
-carrying `internal:screencast-recorder:agent` and never `global:superadmin`. It
-is minted only by `auth-microservice/scripts/provision-service-token.js`. The
-API declares allowed service roles on every machine-accessible route,
-classifying by effect rather than HTTP verb, and denies and error-logs any
-undecorated route. Rotation happens before 90 days, and the acceptance proof is
-a successful authenticated call — never `exp`, Secret synchronisation or a pod
-restart.
+**Machine.** Follow only
+[`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
+Local pair for this service: identity
+`svc-screencast-agent--screencast-recorder@internal.alfares.cz`, role
+`internal:screencast-recorder:agent`. The API declares that role on every
+machine-accessible route.
 
-The pod receives its credentials through Vault → ExternalSecret → Secret →
+The pod receives credentials through Vault → ExternalSecret → Secret →
 `secretKeyRef`. The host agent, having no pod, reads the same Vault path
-through AppRole, the established path for non-pod consumers in this ecosystem.
+through AppRole (same host-side path used by other non-pod marketplace
+callers).
 
 Storage authorisation is a policy boundary, not a code convention: the runtime
 MinIO service account can address `screencast-sessions` and nothing else.

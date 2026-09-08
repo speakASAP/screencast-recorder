@@ -85,7 +85,7 @@ implements `BUSINESS.md` *Goals* 1-8 and the *Phase 1 outcome* of
 | No secret in Git, logs or output | Pre-commit secret scan passes; Vault errors are scrubbed rather than chained; window titles redact Vault/AWS/GitHub/JWT shapes before they are written |
 | No premature deletion | The uploader has no delete method, asserted by test; phase 1 deletes nothing automatically |
 | `speakasap-records` untouched | Denial verified through two independent clients |
-| Canonical service identity | One Auth-signed RS256 principal, `internal:screencast-recorder:agent`, minted only by `provision-service-token.js`; undecorated routes denied and error-logged |
+| Canonical service identity | SPOT link only; local role `internal:screencast-recorder:agent` enforced per route |
 
 ## Sensitive-data evidence
 

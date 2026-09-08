@@ -25,16 +25,17 @@ agent never listens on a port; the API never connects to the agent. This
 direction is deliberate: the agent runs on a workstation with no stable inbound
 address, and it must keep recording when the API is unreachable.
 
-Every request carries the pair-specific Auth-signed RS256 token:
+Machine auth follows only
+[`SERVICE_IDENTITY_CONSUMER_STANDARD.md`](../../../auth-microservice/docs/SERVICE_IDENTITY_CONSUMER_STANDARD.md).
+Every request carries the pair Bearer token:
 
 ```http
 Authorization: Bearer <AGENT_BEARER>
 ```
 
-Identity `svc-screencast-agent--screencast-recorder@internal.alfares.cz`, role
-`internal:screencast-recorder:agent`. The agent reads this token from Vault via
-AppRole at startup and on rotation. Every route below declares that role
-explicitly; an undecorated route is denied and error-logged.
+Local pair: `svc-screencast-agent--screencast-recorder@internal.alfares.cz`,
+role `internal:screencast-recorder:agent`. The agent reads this token from Vault
+via AppRole. Every route below declares that role.
 
 Operator (browser) routes authenticate separately through hosted Auth with
 `app:screencast-recorder:user`. They are not part of this contract.
