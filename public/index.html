@@ -14,6 +14,7 @@
         <button type="button" data-screen="recording" hidden>Recording</button>
         <button type="button" data-screen="review" hidden>Review</button>
         <button type="button" data-screen="sessions">Sessions</button>
+        <button type="button" data-screen="preview" hidden>Preview</button>
       </nav>
       <span class="who"><span id="whoami">…</span> · <a href="/auth/logout">sign out</a></span>
     </header>
@@ -91,10 +92,32 @@
         <h2>Sessions</h2>
         <table id="session-table">
           <thead>
-            <tr><th>Title</th><th>State</th><th>Started</th><th>Duration</th><th>Prefix</th></tr>
+            <tr><th>Title</th><th>State</th><th>Started</th><th>Duration</th><th>Prefix</th><th></th></tr>
           </thead>
           <tbody></tbody>
         </table>
+      </section>
+
+      <!-- Screen 5: what a stored session actually contains -->
+      <section id="screen-preview" hidden>
+        <h2>Preview <span id="preview-title" class="src"></span></h2>
+
+        <!--
+          No crossorigin attribute on the media elements: adding one would
+          require bucket CORS, which is deliberately not configured.
+        -->
+        <video id="preview-video" controls preload="metadata" playsinline></video>
+        <div id="preview-audio-elements" hidden></div>
+
+        <p id="preview-render-note" class="note"></p>
+
+        <h3>Audio sources</h3>
+        <div id="preview-sources"></div>
+
+        <h3>Activity</h3>
+        <canvas id="preview-timeline" height="120"></canvas>
+        <div id="preview-legend"></div>
+        <p id="preview-activity-note" class="note"></p>
       </section>
     </main>
 
