@@ -10,7 +10,19 @@ export interface AgentConfigFile {
   recordingDir: string;
   minFreeGb: number;
   version: string;
+  /**
+   * The phone camera's stream URL, e.g. an IP Camera Lite MJPEG endpoint.
+   *
+   * Optional: a host with a real webcam plugged in needs no puller at all, and
+   * the console reports the puller as unavailable rather than broken.
+   */
+  cameraUrl?: string;
+  /** The v4l2loopback node the puller writes and the recorder reads. */
+  cameraDevice: string;
 }
+
+/** Matches the node created by `modprobe v4l2loopback video_nr=9`. */
+export const DEFAULT_CAMERA_DEVICE = '/dev/video9';
 
 const CONFIG_PATH = join(homedir(), '.config', 'screencast-agent', 'config.json');
 
@@ -47,5 +59,7 @@ export async function loadConfig(): Promise<AgentConfigFile> {
     recordingDir: parsed.recordingDir ?? join(homedir(), 'recordings'),
     minFreeGb: parsed.minFreeGb ?? 20,
     version: parsed.version ?? '0.1.0',
+    cameraUrl: parsed.cameraUrl,
+    cameraDevice: parsed.cameraDevice ?? DEFAULT_CAMERA_DEVICE,
   };
 }

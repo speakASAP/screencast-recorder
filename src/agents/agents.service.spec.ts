@@ -1,5 +1,6 @@
 import { Repository } from 'typeorm';
 import { Agent } from '../sessions/entities/agent.entity';
+import { Command } from '../sessions/entities/command.entity';
 import { AgentsService } from './agents.service';
 
 describe('AgentsService', () => {
@@ -9,6 +10,7 @@ describe('AgentsService', () => {
     create: jest.Mock;
     find: jest.Mock;
   };
+  let commandRepo: { save: jest.Mock; create: jest.Mock };
   let service: AgentsService;
 
   beforeEach(() => {
@@ -18,7 +20,14 @@ describe('AgentsService', () => {
       create: jest.fn((entity) => entity),
       find: jest.fn(),
     };
-    service = new AgentsService(repo as unknown as Repository<Agent>);
+    commandRepo = {
+      save: jest.fn((entity) => Promise.resolve({ id: 'cmd-uuid', ...entity })),
+      create: jest.fn((entity) => entity),
+    };
+    service = new AgentsService(
+      repo as unknown as Repository<Agent>,
+      commandRepo as unknown as Repository<Command>,
+    );
   });
 
   const enrolment = {
@@ -76,5 +85,58 @@ describe('AgentsService', () => {
   it('rejects a capability report for an unknown agent', async () => {
     repo.findOne.mockResolvedValue(null);
     await expect(service.reportCapabilities('ghost', { displays: [] } as never)).rejects.toThrow();
+  });
+});
+
+describe('puller control', () => {
+  const makeService = () => {
+    const agents = {
+      findOne: jest.fn(async (): Promise<{ id: string; hostname: string } | null> => ({
+        id: 'a1',
+        hostname: 'alfares',
+      })),
+      save: jest.fn(),
+      create: jest.fn(),
+      find: jest.fn(),
+    };
+    const commands = {
+      save: jest.fn(async (entity) => entity),
+      create: jest.fn((entity) => entity),
+    };
+    const service = new AgentsService(
+      agents as unknown as Repository<Agent>,
+      commands as unknown as Repository<Command>,
+    );
+    return { service, agents, commands };
+  };
+
+  it('queues a command the agent will pick up on its next poll', async () => {
+    // The agent has no inbound HTTP surface, so control is queued rather than
+    // called: this is the only path from the console to the puller.
+    const { service, commands } = makeService();
+    await service.queuePullerCommand('a1', 'start');
+
+    expect(commands.save).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'a1', payload: { action: 'start' } }),
+    );
+  });
+
+  it('refuses an unknown agent rather than queueing an undeliverable command', async () => {
+    const { service, agents } = makeService();
+    agents.findOne = jest.fn(async () => null);
+    await expect(service.queuePullerCommand('a1', 'start')).rejects.toThrow(/Unknown agent/);
+  });
+
+  it('reports no state before the agent has said anything', async () => {
+    // "unknown" and "stopped" are different facts: one means the agent never
+    // reported, the other that it reported a stopped puller.
+    const { service } = makeService();
+    expect(service.pullerStateFor('a1')).toBeNull();
+  });
+
+  it('keeps the last reported state per agent', async () => {
+    const { service } = makeService();
+    service.recordPullerState('a1', { running: true });
+    expect(service.pullerStateFor('a1')).toMatchObject({ running: true });
   });
 });

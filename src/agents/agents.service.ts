@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Agent } from '../sessions/entities/agent.entity';
+import { Command, CommandType } from '../sessions/entities/command.entity';
 import { CapabilitiesDto } from './dto/capabilities.dto';
 import { EnrollDto } from './dto/enroll.dto';
 
@@ -10,11 +11,21 @@ const ONLINE_WINDOW_MS = 60_000;
 
 const POLL_INTERVAL_SECONDS = 5;
 
+/**
+ * Stands in for "no session" on a host-level command.
+ *
+ * The all-zero UUID is not a real session and never will be: session ids are
+ * random v4, which cannot produce it.
+ */
+export const HOST_LEVEL_COMMAND_SESSION = '00000000-0000-0000-0000-000000000000';
+
 @Injectable()
 export class AgentsService {
   constructor(
     @InjectRepository(Agent)
     private readonly agents: Repository<Agent>,
+    @InjectRepository(Command)
+    private readonly commands: Repository<Command>,
   ) {}
 
   async enroll(dto: EnrollDto): Promise<{ agent_id: string; poll_interval_seconds: number }> {
@@ -84,5 +95,48 @@ export class AgentsService {
     const agent = await this.agents.findOne({ where: { id: agentId } });
     if (!agent) throw new NotFoundException('Unknown agent');
     return agent;
+  }
+
+  /**
+   * The last puller state an agent reported, and the command queue to change it.
+   *
+   * Held in memory rather than a column: it describes a process that lives and
+   * dies with the agent, so a value that survived a restart would be a claim
+   * about something that no longer exists.
+   */
+  private pullerState = new Map<string, Record<string, unknown>>();
+
+  recordPullerState(agentId: string, state: Record<string, unknown>): void {
+    this.pullerState.set(agentId, { ...state, reportedAt: new Date().toISOString() });
+  }
+
+  pullerStateFor(agentId: string): Record<string, unknown> | null {
+    return this.pullerState.get(agentId) ?? null;
+  }
+
+  /**
+   * Queues a puller change for the agent to pick up on its next poll.
+   *
+   * No session id: this acts on the host's camera plumbing, not on a
+   * recording, and the operator uses it before any session exists.
+   */
+  async queuePullerCommand(agentId: string, action: 'start' | 'stop'): Promise<{ queued: string }> {
+    const agent = await this.agents.findOne({ where: { id: agentId } });
+    if (!agent) throw new NotFoundException(`Unknown agent ${agentId}`);
+
+    await this.commands.save(
+      this.commands.create({
+        agentId,
+        // The puller belongs to the host, not to any recording, but sessionId
+        // is a non-null column. A fixed sentinel says "no session" without a
+        // migration to make the column nullable for this one command type.
+        sessionId: HOST_LEVEL_COMMAND_SESSION,
+        type: CommandType.PullerControl,
+        payload: { action },
+        deliveredAt: null,
+      }),
+    );
+
+    return { queued: action };
   }
 }

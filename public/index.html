@@ -40,6 +40,28 @@
 
         <div id="agents"><p class="muted">Loading agents…</p></div>
 
+        <!--
+          Camera check. Hidden until a webcam source is ticked, because a
+          session with no camera has nothing to check and the controls would
+          only be noise.
+        -->
+        <div id="camera-check" hidden>
+          <h3>Camera</h3>
+          <p id="puller-status" class="note">Checking…</p>
+          <button id="puller-start" type="button">Start camera feed</button>
+          <button id="puller-stop" type="button">Stop</button>
+          <!--
+            The preview is served by the agent on the loopback interface, so
+            it renders only when the console is opened from the recording host
+            itself. That is the case this is for: confirming your own camera
+            before you record with it.
+          -->
+          <div id="camera-preview-holder" hidden>
+            <img id="camera-preview" alt="Live camera preview" />
+            <p class="note">Live preview. Nothing here is recorded until you press Start recording.</p>
+          </div>
+        </div>
+
         <p id="estimate" class="muted"></p>
 
         <button id="start" type="button" class="primary" disabled>Start recording</button>

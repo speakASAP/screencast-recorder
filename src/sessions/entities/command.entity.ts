@@ -8,6 +8,15 @@ export enum CommandType {
   Abort = 'abort',
   Upload = 'upload',
   /**
+   * Start or stop the process that feeds a phone's stream into a loopback
+   * device, and report whether it is running.
+   *
+   * Outside the capture loop, like RenderPreview: it acts on the host's camera
+   * plumbing rather than on a session, and the operator drives it from the
+   * console before recording anything.
+   */
+  PullerControl = 'puller_control',
+  /**
    * Render the preview proxies for a stored session.
    *
    * Unlike every other command here this one is not part of the capture loop:

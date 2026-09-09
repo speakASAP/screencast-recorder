@@ -4,6 +4,17 @@ import { statfs } from 'node:fs/promises';
 import { Agent, Command } from './agent';
 import { ApiClient } from './api-client';
 import { discoverCapabilities } from './capabilities';
+import { buildProbeArgs, isNoSignal } from './capture/camera-probe';
+import { LivePreviewServer } from './capture/preview-server';
+import { PullerSupervisor } from './capture/puller';
+
+/**
+ * Port for the live camera preview, on the loopback interface only.
+ *
+ * Fixed rather than negotiated: the console builds the URL, and the operator
+ * browses from this same host, so there is nothing to discover.
+ */
+const LIVE_PREVIEW_PORT = 3392;
 import { CaptureSession, TrackRequest } from './capture/session';
 import { checkClock } from './clock';
 import { loadConfig } from './config';
@@ -54,6 +65,11 @@ async function main(): Promise<void> {
   let capabilities = await discoverCapabilities(config.recordingDir);
   await api.reportCapabilities(agentId, capabilities);
 
+  // One puller and one preview server for the life of the agent. Both are
+  // idle until the operator asks for them from the console.
+  const puller = new PullerSupervisor();
+  const livePreview = new LivePreviewServer(config.cameraDevice, LIVE_PREVIEW_PORT);
+
   let session: CaptureSession | null = null;
   let activeSessionId: string | null = null;
 
@@ -64,6 +80,45 @@ async function main(): Promise<void> {
         nextCommand: (id) => api.nextCommand(id),
       },
       capture: {
+        /**
+         * Reads one frame to prove the camera is delivering, not merely present.
+         *
+         * A failure here is not a crash: "no signal" is an answer the operator
+         * acts on -- start the phone app, or the puller -- so it is reported
+         * rather than thrown.
+         */
+        async probeCamera(device) {
+          try {
+            await runFfmpeg(buildProbeArgs(device));
+            return { hasSignal: true, detail: 'frames arriving' };
+          } catch (error) {
+            const message = (error as Error).message;
+            return {
+              hasSignal: false,
+              detail: isNoSignal(message) ? 'no signal from the camera' : message.slice(0, 200),
+            };
+          }
+        },
+        /**
+         * Starts, stops or reports the puller.
+         *
+         * Owned by the agent rather than a systemd unit because its lifetime is
+         * the operator's: it runs while they are setting up and recording, and
+         * there is no reason for it to survive the agent that drives it.
+         */
+        async puller(action) {
+          if (action === 'start') {
+            if (!config.cameraUrl) {
+              return { running: false, error: 'no cameraUrl in the agent config' };
+            }
+            puller.start({ sourceUrl: config.cameraUrl, device: config.cameraDevice });
+            livePreview.start();
+          } else if (action === 'stop') {
+            puller.stop();
+            livePreview.stop();
+          }
+          return { ...puller.status(), previewPort: LIVE_PREVIEW_PORT };
+        },
         async start(sessionId, tracks) {
           activeSessionId = sessionId;
           capabilities = await discoverCapabilities(config.recordingDir);

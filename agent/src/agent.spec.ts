@@ -52,6 +52,7 @@ function makeDeps(
       isRunning: () => captureStarts > 0 && !stopped,
       states: () => [],
       currentWindow: () => 'nvim',
+      probeCamera: jest.fn(async () => ({ hasSignal: true, detail: 'ok' })),
       ...captureOverrides,
     },
 
@@ -435,5 +436,86 @@ describe('render-preview', () => {
     await agent.handle(command as never);
     await prepareAndStart(agent, 's2');
     expect(deps.captureStarts).toBe(1);
+  });
+});
+
+describe('a camera with no signal never reaches T0', () => {
+  const webcamTracks = [
+    { track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' },
+    { track_id: 't2', kind: 'webcam', source_ref: '/dev/video9' },
+  ];
+
+  const noSignal = { probeCamera: jest.fn(async () => ({ hasSignal: false, detail: 'no signal from the camera' })) };
+
+  it('fails prepare when the camera is delivering nothing', async () => {
+    // A v4l2loopback node with no writer is listed by discovery and opens
+    // without complaint. Without this check the session records an empty
+    // webcam track and the operator finds out on playback, when the work
+    // cannot be repeated.
+    const deps = makeDeps({}, noSignal as never);
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's', payload: { tracks: webcamTracks },
+    } as never);
+
+    const status = deps.posted.find((p) => p.path.includes('/status'));
+    expect(status?.body).toMatchObject({ state: 'failed', reason: 'camera_no_signal' });
+  });
+
+  it('names the device that had no signal', async () => {
+    // Two cameras could be selected; "no signal" without saying which one
+    // leaves the operator checking both.
+    const deps = makeDeps({}, noSignal as never);
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's', payload: { tracks: webcamTracks },
+    } as never);
+
+    const status = deps.posted.find((p) => p.path.includes('/status'));
+    expect((status?.body as { detail: string }).detail).toContain('/dev/video9');
+  });
+
+  it('never starts capture when the camera has no signal', async () => {
+    // The point of failing in prepare is that T0 is never reached.
+    const deps = makeDeps({}, noSignal as never);
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's', payload: { tracks: webcamTracks },
+    } as never);
+    await agent.handle({
+      command_id: 'c', type: 'start', session_id: 's', payload: { t0: future() },
+    } as never);
+
+    expect(deps.captureStarts).toBe(0);
+  });
+
+  it('reports ready when the camera is delivering frames', async () => {
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's', payload: { tracks: webcamTracks },
+    } as never);
+
+    const status = deps.posted.find((p) => p.path.includes('/status'));
+    expect(status?.body).toMatchObject({ state: 'ready' });
+  });
+
+  it('does not probe when no camera was selected', async () => {
+    // Probing opens the device; doing it for a screen-only session would be
+    // work with no question behind it.
+    const probeCamera = jest.fn(async () => ({ hasSignal: true, detail: 'ok' }));
+    const deps = makeDeps({}, { probeCamera } as never);
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
+
+    expect(probeCamera).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { t0Missed, waitUntil } from './clock';
 
 export interface Command {
   command_id: string;
-  type: 'prepare' | 'start' | 'stop' | 'abort' | 'upload' | 'render-preview';
+  type: 'prepare' | 'start' | 'stop' | 'abort' | 'upload' | 'render-preview' | 'puller_control';
   session_id: string;
   payload: Record<string, any>;
 }
@@ -25,6 +25,10 @@ export interface AgentDeps {
   };
   capture: {
     start(sessionId: string, tracks: unknown[]): Promise<void>;
+    /** Whether a camera is delivering frames right now, and why not if it is not. */
+    probeCamera(device: string): Promise<{ hasSignal: boolean; detail: string }>;
+    /** Starts or stops the phone-stream puller, and reports its state. */
+    puller(action: 'start' | 'stop' | 'status'): Promise<Record<string, unknown>>;
     stop(): Promise<void>;
     isRunning(): boolean;
     states(): { trackId: string; degraded: boolean; segments: number; bytes: number }[];
@@ -100,6 +104,8 @@ export class Agent {
         return this.upload(command);
       case 'render-preview':
         return this.renderPreview(command);
+      case 'puller_control':
+        return this.pullerControl(command);
       default:
         return undefined;
     }
@@ -128,10 +134,30 @@ export class Agent {
       return;
     }
 
+    const tracks = (command.payload.tracks as { kind?: string; source_ref?: string }[]) ?? [];
+
+    // Every selected camera must be delivering frames NOW, not merely exist.
+    // A v4l2loopback node with no writer is listed by discovery and opens
+    // without complaint, so without this the session records an empty webcam
+    // track and the operator finds out on playback, when it cannot be redone.
+    for (const track of tracks) {
+      if (track.kind !== 'webcam' || !track.source_ref) continue;
+
+      const signal = await this.deps.capture.probeCamera(track.source_ref);
+      if (!signal.hasSignal) {
+        await this.report(command.session_id, {
+          state: 'failed',
+          reason: 'camera_no_signal',
+          detail: `${track.source_ref}: ${signal.detail}`,
+        });
+        return;
+      }
+    }
+
     this.sessionId = command.session_id;
     // The track list arrives with `prepare` and NOT with `start`, whose payload
     // is only t0. Holding it here is what lets `start` be a bare timing signal.
-    this.preparedTracks = (command.payload.tracks as unknown[]) ?? [];
+    this.preparedTracks = tracks as unknown[];
     await this.report(command.session_id, { state: 'ready', clock, free_disk_bytes: free });
   }
 
@@ -168,6 +194,31 @@ export class Agent {
     }
 
     await this.report(command.session_id, { state: 'recording' });
+  }
+
+  /**
+   * Drives the camera puller from the console.
+   *
+   * Refused while a capture is running: the puller writes the device the
+   * recording is reading, so stopping it mid-session would silently empty a
+   * webcam track that cannot be re-recorded.
+   */
+  private async pullerControl(command: Command): Promise<void> {
+    const action = (command.payload.action as 'start' | 'stop' | 'status') ?? 'status';
+
+    if (action !== 'status' && this.deps.capture.isRunning()) {
+      await this.deps.api.post('/api/agents/puller', {
+        agent_id: this.config.agentId,
+        error: 'refused: a capture is running',
+        ...(await this.deps.capture.puller('status')),
+      });
+      return;
+    }
+
+    await this.deps.api.post('/api/agents/puller', {
+      agent_id: this.config.agentId,
+      ...(await this.deps.capture.puller(action)),
+    });
   }
 
   private async stop(): Promise<void> {

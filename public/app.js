@@ -22,6 +22,7 @@ const state = {
   playingSource: null,
   peaksBySource: new Map(),
   playheadTimer: null,
+  cameraAgentId: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -148,6 +149,8 @@ async function loadAgents() {
     .join('');
 
   container.addEventListener('change', updateStartButton);
+  // Ticking a camera is what makes the camera check relevant.
+  container.addEventListener('change', updateCameraCheck);
   updateStartButton();
 }
 
@@ -706,6 +709,103 @@ function drawTimeline(timeline) {
   };
 }
 
+// --------------------------------------------------------------- camera check
+
+/** The agent serves its live preview here, on the recording host's loopback. */
+const LIVE_PREVIEW_PORT = 3392;
+
+/**
+ * Shows the camera controls only when a camera is actually selected.
+ *
+ * Called on every source change: ticking the iPhone is what makes the check
+ * relevant, and unticking it makes the controls noise.
+ */
+function updateCameraCheck() {
+  const selected = [...document.querySelectorAll('#agents input[type=checkbox]:checked')].filter(
+    (box) => box.dataset.kind === 'webcam',
+  );
+
+  const holder = $('camera-check');
+  holder.hidden = selected.length === 0;
+  if (selected.length === 0) {
+    stopCameraPreview();
+    return;
+  }
+
+  state.cameraAgentId = selected[0].dataset.agent;
+  void refreshPullerStatus();
+}
+
+/**
+ * Reads the puller state the agent last reported.
+ *
+ * The value can be one poll behind -- the agent reports after acting, not
+ * continuously -- so the age is shown rather than presenting it as live truth.
+ */
+async function refreshPullerStatus() {
+  const agentId = state.cameraAgentId;
+  if (!agentId) return;
+
+  let status;
+  try {
+    status = await api(`/api/agents/${agentId}/puller`);
+  } catch (error) {
+    $('puller-status').textContent = `Could not read the camera feed state: ${error.message}`;
+    return;
+  }
+
+  if (status.unknown) {
+    $('puller-status').textContent =
+      'Camera feed state unknown — the agent has not reported since it started.';
+  } else if (status.running) {
+    $('puller-status').textContent = 'Camera feed running.';
+    startCameraPreview();
+  } else {
+    // Say why it stopped when the agent knows: "exited 237" is what
+    // distinguishes a phone that went to sleep from one never started.
+    const why = status.lastExitCode != null ? ` (last exit ${status.lastExitCode})` : '';
+    $('puller-status').textContent = `Camera feed stopped${why}. Start it, then check the preview.`;
+    stopCameraPreview();
+  }
+}
+
+/**
+ * Points the <img> at the agent's mpjpeg endpoint.
+ *
+ * A cache-busting query is required: without it the browser reuses the
+ * previous multipart response and the image never reconnects after a restart.
+ */
+function startCameraPreview() {
+  const holder = $('camera-preview-holder');
+  const img = $('camera-preview');
+  holder.hidden = false;
+  if (!img.src) img.src = `http://127.0.0.1:${LIVE_PREVIEW_PORT}/preview?t=${Date.now()}`;
+}
+
+function stopCameraPreview() {
+  const img = $('camera-preview');
+  // Clearing src is what closes the connection; the agent kills its ffmpeg
+  // when the response ends, so a hidden preview costs nothing.
+  img.removeAttribute('src');
+  $('camera-preview-holder').hidden = true;
+}
+
+async function controlPuller(action) {
+  const agentId = state.cameraAgentId;
+  if (!agentId) return;
+
+  $('puller-status').textContent = action === 'start' ? 'Starting…' : 'Stopping…';
+  try {
+    await api(`/api/agents/${agentId}/puller/${action}`, { method: 'POST' });
+  } catch (error) {
+    $('puller-status').textContent = `Could not ${action} the camera feed: ${error.message}`;
+    return;
+  }
+
+  // The agent acts on its next poll, so the state is not readable immediately.
+  setTimeout(() => void refreshPullerStatus(), 2000);
+}
+
 // ------------------------------------------------------------------ waveforms
 
 /** Lane height in CSS pixels. Tall enough to read, short enough to stack many. */
@@ -902,6 +1002,8 @@ api('/auth/me')
   })
   .catch(() => undefined);
 
+$('puller-start').addEventListener('click', () => void controlPuller('start'));
+$('puller-stop').addEventListener('click', () => void controlPuller('stop'));
 $('start').addEventListener('click', startSession);
 $('stop').addEventListener('click', stopSession);
 $('save').addEventListener('click', saveSession);
