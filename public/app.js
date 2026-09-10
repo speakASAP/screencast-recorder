@@ -778,8 +778,26 @@ async function refreshPullerStatus() {
 function startCameraPreview() {
   const holder = $('camera-preview-holder');
   const img = $('camera-preview');
+  const note = $('camera-preview-note');
   holder.hidden = false;
-  if (!img.src) img.src = `http://127.0.0.1:${LIVE_PREVIEW_PORT}/preview?t=${Date.now()}`;
+  if (img.src) return;
+
+  // The stream is served by the agent on this host's loopback interface, so a
+  // console opened from another machine reaches nothing. Saying so is the
+  // difference between "the camera is broken" and "you are not at that
+  // machine" -- the image itself fails identically either way.
+  img.onerror = () => {
+    note.textContent =
+      'No preview. The live view is served by the recording host itself, so it ' +
+      'only appears when the console is opened on that machine. The camera feed ' +
+      'state above is still accurate.';
+  };
+  img.onload = () => {
+    note.textContent = 'Live preview. Nothing here is recorded until you press Start recording.';
+  };
+
+  note.textContent = 'Connecting to the camera…';
+  img.src = `http://127.0.0.1:${LIVE_PREVIEW_PORT}/preview?t=${Date.now()}`;
 }
 
 function stopCameraPreview() {

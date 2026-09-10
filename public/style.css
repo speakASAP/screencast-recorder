@@ -460,3 +460,22 @@ td.src {
   cursor: pointer;
   border-radius: 3px;
 }
+
+/* Live camera preview.
+   An <img> streaming multipart JPEG has no intrinsic size until its first
+   frame arrives, so without an explicit box it collapses to zero height and
+   the operator sees the caption with nothing above it. The min-height and
+   background also make "connecting" visibly different from "broken". */
+#camera-preview-holder {
+  margin: 8px 0;
+}
+
+#camera-preview {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  min-height: 200px;
+  background: #1f2023;
+  border-radius: 4px;
+  object-fit: contain;
+}
