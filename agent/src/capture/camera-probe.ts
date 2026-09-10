@@ -39,6 +39,12 @@ export function isNoSignal(stderr: string): boolean {
     /not a video capture device/i.test(stderr) ||
     /no such device/i.test(stderr) ||
     /no such file or directory/i.test(stderr) ||
-    /cannot open video device/i.test(stderr)
+    /cannot open video device/i.test(stderr) ||
+    // A v4l2loopback device with exclusive_caps admits ONE reader, and the
+    // console's own live preview is a reader. Pressing Start while watching
+    // the preview therefore fails to open the camera -- unusable for the same
+    // reason and with the same fix as a dead feed, so it is named here rather
+    // than surfacing as an unrecognised ffmpeg error.
+    /device or resource busy/i.test(stderr)
   );
 }

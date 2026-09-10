@@ -105,3 +105,13 @@ describe('the camera check is wired', () => {
     expect(app).not.toMatch(/preview.*0\.0\.0\.0/);
   });
 });
+
+describe('the preview releases the camera before recording', () => {
+  it('stops the preview inside startSession', () => {
+    // v4l2loopback with exclusive_caps admits ONE reader. Leaving the preview
+    // attached made the capture fail with "Device or resource busy", and the
+    // session sat in `preparing` with every track pending.
+    const start = app.slice(app.indexOf('async function startSession()'));
+    expect(start.slice(0, 600)).toContain('stopCameraPreview()');
+  });
+});

@@ -181,6 +181,15 @@ function updateStartButton() {
 }
 
 async function startSession() {
+  // The camera admits one reader: v4l2loopback with exclusive_caps means the
+  // live preview and the recording cannot both hold /dev/video9. Releasing it
+  // here is what lets the capture open it -- without this, pressing Start
+  // while watching the preview failed with "Device or resource busy".
+  stopCameraPreview();
+  // The agent kills its preview ffmpeg when the response closes, which is not
+  // instant. A short settle keeps the capture from racing it for the device.
+  if (state.cameraAgentId) await new Promise((resolve) => setTimeout(resolve, 600));
+
   $('new-error').hidden = true;
   const fps = Number($('preset').value);
 

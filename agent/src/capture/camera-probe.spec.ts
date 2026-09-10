@@ -40,6 +40,14 @@ describe('isNoSignal', () => {
     expect(isNoSignal('Error opening input file /dev/video9.\nNo such file or directory')).toBe(true);
   });
 
+  it('recognises a device already held by another reader', () => {
+    // v4l2loopback with exclusive_caps allows ONE reader. The console's own
+    // live preview holds it, so pressing Start while watching the preview
+    // produced "Device or resource busy" -- a real, recurring case that must
+    // be named rather than reported as an unknown ffmpeg failure.
+    expect(isNoSignal('Error opening input: Device or resource busy')).toBe(true);
+  });
+
   it('does not claim no-signal for an unrelated failure', () => {
     // A VAAPI or permission failure is a different problem with a different
     // fix, and reporting it as "no signal" would send the operator to restart
