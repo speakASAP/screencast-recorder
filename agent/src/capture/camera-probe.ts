@@ -12,7 +12,12 @@ export function buildProbeArgs(device: string): string[] {
     '-loglevel', 'error',
     // Bounded: the operator is waiting at session start, and "no signal" is a
     // more useful answer than an indefinite wait.
-    '-timeout', '5000000',
+    //
+    // `-timelimit`, not `-timeout`: the latter belongs to the network
+    // protocols and the v4l2 demuxer rejects it outright, exiting 8 with
+    // "Option timeout not found" before it ever opens the device. A healthy
+    // camera then probed as no-signal and blocked every webcam recording.
+    '-timelimit', '5',
     '-f', 'v4l2',
     '-i', device,
     '-frames:v', '1',

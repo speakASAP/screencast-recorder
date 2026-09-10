@@ -14,7 +14,15 @@ describe('buildProbeArgs', () => {
   it('gives up quickly rather than hanging the session start', () => {
     // A stalled camera must not block T0 indefinitely: the operator is
     // waiting, and the answer "no signal" is more useful than a spinner.
-    expect(args).toContain('-timeout');
+    expect(args).toContain('-timelimit 5');
+  });
+
+  it('does not pass -timeout, which the v4l2 demuxer rejects outright', () => {
+    // Regression: -timeout is an option of the network protocols, not of
+    // video4linux2. Passing it made ffmpeg exit 8 with "Option timeout not
+    // found" before it ever looked at the device, so a HEALTHY camera probed
+    // as no-signal and no recording with a webcam could ever start.
+    expect(args).not.toContain('-timeout ');
   });
 });
 
