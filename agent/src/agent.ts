@@ -71,6 +71,18 @@ interface PendingReport {
  * API problem. Local media is the source of truth, the API is a controller, and
  * every failure path here keeps ffmpeg running.
  */
+/**
+ * One line per significant event, to stdout, which systemd captures.
+ *
+ * Deliberately plain: this runs beside an unrepeatable recording, so it must
+ * not fail, buffer, or depend on a transport that can be down. Diagnosing a
+ * session stuck in `preparing` previously required querying the database,
+ * because everything between "agent running" and silence went unrecorded.
+ */
+function log(message: string): void {
+  console.log(`[agent] ${message}`);
+}
+
 export class Agent {
   /** command_ids already applied, so at-least-once delivery is safe. */
   private readonly applied = new Set<string>();
@@ -88,8 +100,15 @@ export class Agent {
   async handle(command: Command): Promise<void> {
     // A redelivered start would spawn a second ffmpeg tree writing into the
     // same directory, interleaving two recordings.
-    if (this.applied.has(command.command_id)) return;
+    if (this.applied.has(command.command_id)) {
+      // Said out loud: a duplicate and a command that never arrived look
+      // identical in a silent log, and they need opposite responses.
+      log(`ignored ${command.type} ${command.command_id}: already applied`);
+      return;
+    }
     this.applied.add(command.command_id);
+
+    log(`handling ${command.type} for session ${command.session_id}`);
 
     switch (command.type) {
       case 'prepare':
@@ -312,6 +331,14 @@ export class Agent {
   ): Promise<void> {
     const path = `/api/sessions/${sessionId}/${kind}`;
     const payload = { agent_id: this.config.agentId, ...body };
+
+    // Status carries the state changes and the refusal reasons -- the facts
+    // that explain a session sitting in `preparing` with nothing capturing.
+    // Progress is a heartbeat many times a minute and would drown them.
+    if (kind === 'status') {
+      const reason = body.reason ? ` (${String(body.reason)})` : '';
+      log(`report ${String(body.state)}${reason} for session ${sessionId}`);
+    }
 
     try {
       await this.deps.api.post(path, payload);

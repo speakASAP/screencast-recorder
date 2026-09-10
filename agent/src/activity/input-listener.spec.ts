@@ -309,3 +309,33 @@ EVENT type 2 (KeyPress)
     expect(XI2_ARGS).toEqual(['test-xi2', '--root']);
   });
 });
+
+describe('xinput is given a display to connect to', () => {
+  it('passes DISPLAY explicitly rather than trusting the environment', () => {
+    // systemd --user does NOT inherit the session's DISPLAY. Without it
+    // `xinput` reports "Unable to connect to X server" and delivers nothing,
+    // which is why every recorded session read keys: 0, clicks: 0 while the
+    // screen capture -- which passes its display explicitly -- worked fine.
+    //
+    // Asserted through the real default spawnFn, not a stub: the whole point
+    // is what the listener hands to node's spawn.
+    let seenEnv: NodeJS.ProcessEnv | undefined;
+    const listener = new InputListener({
+      onKey: () => {},
+      onClick: () => {},
+      spawnFn: (_command, _args, options) => {
+        seenEnv = options?.env;
+        return {
+          stdout: { on: () => {}, setEncoding: () => {} },
+          stderr: { on: () => {} },
+          on: () => {},
+          kill: () => {},
+        } as never;
+      },
+    });
+
+    listener.start();
+    listener.stop();
+    expect(seenEnv?.DISPLAY).toBe(process.env.DISPLAY ?? ':0');
+  });
+});

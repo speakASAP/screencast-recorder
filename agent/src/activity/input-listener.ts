@@ -1,7 +1,14 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
 
-export type SpawnFn = (command: string, args: string[]) => ChildProcess;
+export type SpawnOptions = { stdio?: unknown; env?: NodeJS.ProcessEnv };
+
+/**
+ * The options are part of the signature so a test can assert on them. DISPLAY
+ * reaching xinput is load-bearing -- without it the counters silently read
+ * zero -- and a seam that hides it cannot verify it.
+ */
+export type SpawnFn = (command: string, args: string[], options?: SpawnOptions) => ChildProcess;
 
 /**
  * Global input counting on X11, via the XInput2 extension.
@@ -145,13 +152,23 @@ export class InputListener {
 
   constructor(private readonly options: InputListenerOptions) {
     this.spawnFn =
-      options.spawnFn ?? ((command, args) => nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] }));
+      options.spawnFn ??
+      ((command, args, options) =>
+        nodeSpawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] }));
   }
 
   start(): void {
     this.stopped = false;
     try {
-      const proc = this.spawnFn('xinput', XI2_ARGS);
+      // DISPLAY passed explicitly, never left to the ambient environment. A
+      // systemd --user unit does not inherit the session's DISPLAY, so
+      // `xinput` reported "Unable to connect to X server" and counted nothing:
+      // every stored session read keys: 0, clicks: 0. The screen capture was
+      // unaffected because it passes its display explicitly, which is why the
+      // picture looked fine while the counters were dead.
+      const proc = this.spawnFn('xinput', XI2_ARGS, {
+        env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ':0' },
+      });
       this.proc = proc;
 
       proc.stdout?.setEncoding?.('utf8');

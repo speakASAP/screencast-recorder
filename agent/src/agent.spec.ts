@@ -519,3 +519,66 @@ describe('a camera with no signal never reaches T0', () => {
     expect(probeCamera).not.toHaveBeenCalled();
   });
 });
+
+describe('command handling is visible in the log', () => {
+  /** Captures what the agent writes, without letting it reach the test output. */
+  const captureLog = () => {
+    const lines: string[] = [];
+    const spy = jest.spyOn(console, 'log').mockImplementation((...args) => {
+      lines.push(args.map(String).join(' '));
+    });
+    return { lines, restore: () => spy.mockRestore() };
+  };
+
+  it('logs every command it accepts, with its type and session', async () => {
+    // Diagnosing a session stuck in `preparing` needed database queries,
+    // because the agent logged nothing between "agent running" and silence.
+    const log = captureLog();
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p1', type: 'prepare', session_id: 'sess-abc',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
+    log.restore();
+
+    expect(log.lines.join('\n')).toMatch(/prepare/);
+    expect(log.lines.join('\n')).toMatch(/sess-abc/);
+  });
+
+  it('logs why a command was refused, not only that it ran', async () => {
+    // "camera_no_signal" in the log is what turns a stuck console into a
+    // one-line answer.
+    const log = captureLog();
+    const deps = makeDeps({}, {
+      probeCamera: jest.fn(async () => ({ hasSignal: false, detail: 'no signal from the camera' })),
+    } as never);
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p1', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't2', kind: 'webcam', source_ref: '/dev/video9' }] },
+    } as never);
+    log.restore();
+
+    expect(log.lines.join('\n')).toMatch(/camera_no_signal/);
+  });
+
+  it('says when a redelivered command is ignored', async () => {
+    // Otherwise a duplicate looks identical to a command that never arrived.
+    const log = captureLog();
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    const command = {
+      command_id: 'dup', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    };
+    await agent.handle(command as never);
+    await agent.handle(command as never);
+    log.restore();
+
+    expect(log.lines.join('\n')).toMatch(/already applied|ignored|duplicate/i);
+  });
+});

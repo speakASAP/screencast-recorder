@@ -132,15 +132,30 @@ describe('no typed character can reach events.jsonl', () => {
     proc.stdout.write('EVENT type 15 (RawButtonPress)\n    detail: 1\n');
     proc.stdout.write('EVENT type 15 (RawButtonPress)\n    detail: 3\n');
 
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    // Polled, not slept. A fixed wait for an async pipeline is a deadline the
+    // machine can miss: under a full parallel suite this read zero keys and
+    // failed a privacy test that had nothing to do with timing. Waiting for
+    // the condition keeps the assertions and drops the race.
+    const expectedKeys = letters.length + 2;
+    let samples: { keys: number; clicks: number; hotkeys: string[] }[] = [];
+    let keys = 0;
+    let clicks = 0;
+
+    // Polled, not slept. A fixed wait for an async pipeline is a deadline the
+    // machine can miss: under a full parallel suite this read zero keys and
+    // failed a privacy test that had nothing to do with timing. Waiting for
+    // the condition keeps the assertions and drops the race.
+    for (let waited = 0; waited < 5000; waited += 25) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const text = await readFile(file, 'utf8').catch(() => '');
+      samples = text.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      keys = samples.reduce((n, s) => n + s.keys, 0);
+      clicks = samples.reduce((n, s) => n + s.clicks, 0);
+      if (keys >= expectedKeys && clicks >= 2) break;
+    }
+
     listener.stop();
     await tracker.stop();
-
-    const written = await readFile(file, 'utf8');
-    const samples = written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-
-    const keys = samples.reduce((n, s) => n + s.keys, 0);
-    const clicks = samples.reduce((n, s) => n + s.clicks, 0);
     expect(keys).toBe(letters.length + 2); // every press, modifiers included
     expect(clicks).toBe(2);
 

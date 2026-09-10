@@ -115,3 +115,25 @@ describe('the preview releases the camera before recording', () => {
     expect(start.slice(0, 600)).toContain('stopCameraPreview()');
   });
 });
+
+describe('a session stuck in preparing can be abandoned', () => {
+  it('binds the abandon button', () => {
+    // Stop is legal only from `recording`, so a session stuck in `preparing`
+    // had no exit: the operator pressed Stop, nothing happened, and the only
+    // way out was a database update.
+    expect(app).toContain("$('abandon').addEventListener");
+    expect(html).toContain('id="abandon"');
+  });
+
+  it('discards rather than stopping, because stopping is not a legal transition', () => {
+    const fn = app.slice(app.indexOf('async function abandonSession()'));
+    expect(fn.slice(0, 500)).toContain('/discard');
+  });
+
+  it('shows abandon only while preparing, and hides Stop then', () => {
+    // Offering a control that cannot work is what produced the original
+    // report: "I clicked Stop twice and nothing happened."
+    expect(app).toContain("session.state === 'preparing'");
+    expect(app).toContain("$('stop').hidden = stuck");
+  });
+});

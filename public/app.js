@@ -259,11 +259,46 @@ async function pollSession() {
   $('rec-state').textContent = session.state;
   renderTracks(session);
 
+  // Stop is legal only from `recording`. A session still in `preparing` --
+  // a camera with no signal, an agent that never answered -- would otherwise
+  // strand the operator on a screen whose only button does nothing.
+  const stuck = session.state === 'preparing';
+  $('abandon').hidden = !stuck;
+  $('abandon-note').hidden = !stuck;
+  $('stop').hidden = stuck;
+
   const p = session.progress || {};
   $('free-disk').textContent = p.freeDiskBytes ? bytes(p.freeDiskBytes) : '—';
   $('active-window').textContent = p.activeWindow || '—';
 
   if (session.state === 'review') enterReview(session);
+}
+
+/**
+ * Discards a session that never started recording.
+ *
+ * `preparing` transitions legally to `discarded` but not to `stopping`, so
+ * Stop cannot end one. Nothing has been captured at this point, which is why
+ * this asks for no confirmation beyond the button itself.
+ */
+async function abandonSession() {
+  const id = state.sessionId;
+  if (!id) return;
+
+  $('abandon').disabled = true;
+  try {
+    await api(`/api/sessions/${id}/discard`, { method: 'POST' });
+  } catch (error) {
+    $('rec-state').textContent = `could not abandon: ${error.message}`;
+    $('abandon').disabled = false;
+    return;
+  }
+
+  clearInterval(state.pollTimer);
+  state.pollTimer = null;
+  state.sessionId = null;
+  $('abandon').disabled = false;
+  show('new');
 }
 
 /** Fills the per-track table so a running session shows visible movement. */
@@ -1033,6 +1068,7 @@ $('puller-start').addEventListener('click', () => void controlPuller('start'));
 $('puller-stop').addEventListener('click', () => void controlPuller('stop'));
 $('start').addEventListener('click', startSession);
 $('stop').addEventListener('click', stopSession);
+$('abandon').addEventListener('click', abandonSession);
 $('save').addEventListener('click', saveSession);
 $('discard').addEventListener('click', discardSession);
 $('preset').addEventListener('change', updateStartButton);

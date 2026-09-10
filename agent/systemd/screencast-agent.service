@@ -23,6 +23,16 @@ TimeoutStopSec=120
 
 Environment=NODE_ENV=production
 
+# DISPLAY is NOT inherited by a user unit just because the session has one:
+# systemd --user starts with its own environment, and `xinput` then reports
+# "Unable to connect to X server" and delivers nothing. Every recorded session
+# read `keys: 0, clicks: 0` for exactly this reason -- the counting logic was
+# correct and had no events to count.
+#
+# The screen capture reached :0 anyway because CaptureSession passes an
+# explicit display, which is why this went unnoticed: the picture was fine.
+Environment=DISPLAY=:0
+
 # The recording directory is the only path this service needs to write. The
 # credential file is read from ~/.config and never written.
 StandardOutput=journal
