@@ -67,8 +67,26 @@ describe('the waveform lanes are wired to the shared playhead', () => {
     expect([...app.matchAll(/seekAll\(/g)]).toHaveLength(3);
   });
 
-  it('has a container in the page for the lanes to be written into', () => {
-    expect(html).toContain('id="preview-waveforms"');
+  it('has a container in the page for the source rows to be written into', () => {
+    // Lanes live inside the source rows now: one section, one list of
+    // devices, each with the button that selects it beside its own waveform.
+    expect(html).toContain('id="preview-sources"');
+  });
+
+  it('paints each lane into the row its source button is in', () => {
+    expect(app).toMatch(/canvas class="wave-canvas"[^>]*data-source-ref=/);
+    expect(app).toContain('canvas.wave-canvas[data-source-ref=');
+  });
+
+  it('keeps a lane click from also selecting the source', () => {
+    // The lane sits inside the row: without stopPropagation, seeking would
+    // also switch the audible source and POST a preference nobody expressed.
+    // Anchored inside drawWaveforms: the activity timeline assigns
+    // canvas.onclick too, and it is not nested in a button, so slicing from
+    // the first occurrence would assert against the wrong handler.
+    const lanes = app.slice(app.indexOf('async function drawWaveforms'));
+    const handler = lanes.slice(lanes.indexOf('canvas.onclick'));
+    expect(handler.slice(0, handler.indexOf('};'))).toContain('stopPropagation');
   });
 
   it('fetches precomputed peaks rather than decoding audio in the browser', () => {

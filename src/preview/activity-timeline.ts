@@ -4,10 +4,18 @@
  * Pure and dependency-free: these rules are the correctness core of the
  * timeline, and they are cheapest to pin without I/O in the way.
  *
- * Deliberately emits no keys/clicks field. ActivityTracker.countKey and
- * countClick have no caller in agent/src, so every stored session reports
- * zeroes; surfacing a zero would tell the operator the session was quiet when
- * the signal was never recorded. See the defect in TASKS.md.
+ * Keys and clicks are bucketed alongside mouse movement, and `inputMeasured`
+ * says whether they mean anything. The counters have a producer now
+ * (`agent/src/activity/input-listener.ts` feeds ActivityTracker.countKey and
+ * countClick), but sessions recorded before that listener existed are in the
+ * bucket permanently and report `keys: 0, clicks: 0` on every sample. Drawing
+ * those zeroes would tell the operator the session was quiet when the signal
+ * was never recorded, so the flag lets the console say "not measured" instead.
+ *
+ * A genuinely motionless session is indistinguishable from an unmeasured one
+ * and is reported as unmeasured. That error runs in the safe direction: it
+ * understates what is known rather than asserting a quiet session that was
+ * never observed.
  */
 
 export interface ActivitySample {
@@ -30,6 +38,8 @@ export interface TimelineBucket {
   startMs: number;
   endMs: number;
   mouseMovement: number;
+  keys: number;
+  clicks: number;
   window: string | null;
 }
 
@@ -40,6 +50,8 @@ export interface Timeline {
   focus: FocusInterval[];
   topWindows: { window: string; totalMs: number }[];
   sampleCount: number;
+  /** False when no sample carried a count, i.e. the signal was never recorded. */
+  inputMeasured: boolean;
 }
 
 
@@ -105,7 +117,15 @@ export function parseSamples(jsonl: string): ActivitySample[] {
 export function buildTimeline(samples: ActivitySample[], bucketCount: number): Timeline {
   const count = Math.max(1, bucketCount);
   if (samples.length === 0) {
-    return { durationMs: 0, bucketMs: 0, buckets: [], focus: [], topWindows: [], sampleCount: 0 };
+    return {
+      durationMs: 0,
+      bucketMs: 0,
+      buckets: [],
+      focus: [],
+      topWindows: [],
+      sampleCount: 0,
+      inputMeasured: false,
+    };
   }
 
   const originMs = samples[0].ts * 1000;
@@ -116,8 +136,15 @@ export function buildTimeline(samples: ActivitySample[], bucketCount: number): T
     startMs: Math.round(i * bucketMs),
     endMs: Math.round((i + 1) * bucketMs),
     mouseMovement: 0,
+    keys: 0,
+    clicks: 0,
     window: null,
   }));
+
+  // Counts are read defensively: a session recorded before the input listener
+  // has zeroes, and an older line may omit the fields entirely. Either way the
+  // arithmetic must not produce NaN and poison the whole bucket.
+  let inputMeasured = false;
 
   const focus: FocusInterval[] = [];
   const windowTotals = new Map<string, number>();
@@ -131,6 +158,14 @@ export function buildTimeline(samples: ActivitySample[], bucketCount: number): T
       buckets[slot].mouseMovement +=
         Math.abs(sample.mouse[0] - previous.mouse[0]) + Math.abs(sample.mouse[1] - previous.mouse[1]);
     }
+
+    const keys = Number.isFinite(sample.keys) ? sample.keys : 0;
+    const clicks = Number.isFinite(sample.clicks) ? sample.clicks : 0;
+    buckets[slot].keys += keys;
+    buckets[slot].clicks += clicks;
+    // A hotkey counts as evidence on its own: it proves the listener was
+    // running even in a sample where the key total happens to be zero.
+    if (keys > 0 || clicks > 0 || (sample.hotkeys?.length ?? 0) > 0) inputMeasured = true;
 
     if (sample.window) {
       buckets[slot].window ??= sample.window;
@@ -160,5 +195,6 @@ export function buildTimeline(samples: ActivitySample[], bucketCount: number): T
     focus: focus.map((f) => ({ ...f, startMs: Math.round(f.startMs), endMs: Math.round(f.endMs) })),
     topWindows,
     sampleCount: samples.length,
+    inputMeasured,
   };
 }

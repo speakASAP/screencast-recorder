@@ -504,8 +504,19 @@ const FOCUS_COLOURS = [
 ];
 const OTHER_COLOUR = '#9aa0a6';
 
+/**
+ * The input-density band. Deliberately outside FOCUS_COLOURS: those are
+ * assigned to whichever windows a session touched, and reusing one here would
+ * make keystrokes look like a window.
+ */
+const KEY_COLOUR = '#eeca3b';
+const CLICK_COLOUR = '#b279a2';
+
 /** dB at which ffmpeg reports a stream with no signal at all. */
 const DIGITAL_SILENCE_DB = -91;
+
+/** Lane height in CSS pixels. Tall enough to read, short enough to stack many. */
+const LANE_HEIGHT = 56;
 
 async function openPreview(sessionId, title) {
   state.preview = { sessionId, title };
@@ -513,11 +524,9 @@ async function openPreview(sessionId, title) {
   $('preview-render-note').textContent = 'Loading…';
   $('preview-sources').innerHTML = '';
   $('preview-legend').innerHTML = '';
-  // Exactly as specified: no keys/clicks lane, no zero bar, no flat line. A
-  // zero would read as "the session was quiet"; the honest statement is that
-  // the signal was never captured.
-  $('preview-activity-note').textContent =
-    'Keystroke and click density not captured — see the tracker defect in TASKS.md.';
+  // Replaced by drawTimeline once the stream arrives, which is the only thing
+  // that knows whether this session's counts were measured or are absent.
+  $('preview-activity-note').textContent = 'Loading activity…';
   show('preview');
   document.querySelector('nav button[data-screen="preview"]').hidden = false;
 
@@ -664,6 +673,17 @@ function renderSources(sessionId, status) {
     return;
   }
 
+  // One block per source: the description on top, its lane full width below.
+  //
+  // The lane must start at the same x as the activity timeline and span the
+  // same width, or an instant on a waveform sits at a different horizontal
+  // position than the same instant in the video and the keystroke band. That
+  // is why nothing is allowed beside a lane -- a label in the same row would
+  // push it inward by the label's width.
+  //
+  // The canvas is a sibling of the button, not a child: a canvas nested in a
+  // button cannot be clicked without also pressing the button, and nested
+  // interactive elements are unreadable to a screen reader.
   panel.innerHTML = status.audioSources
     .map((source) => {
       const silent = source.silent || source.maxDb <= DIGITAL_SILENCE_DB;
@@ -671,11 +691,14 @@ function renderSources(sessionId, status) {
         ? 'digital silence — this device was probably not the active input'
         : `peak ${source.maxDb.toFixed(1)} dB, mean ${source.meanDb.toFixed(1)} dB`;
       return `
-        <button type="button" class="source" data-source="${source.sourceRef}">
-          <span class="src">${source.sourceRef}</span>
-          <span class="level">${level}</span>
-          ${source.reason ? `<span class="reason">${source.reason}</span>` : ''}
-        </button>`;
+        <div class="source-row">
+          <button type="button" class="source" data-source="${source.sourceRef}">
+            <span class="src">${source.sourceRef}</span>
+            <span class="level">${level}</span>
+            ${source.reason ? `<span class="reason">${source.reason}</span>` : ''}
+          </button>
+          <canvas class="wave-canvas" height="${LANE_HEIGHT}" data-source-ref="${source.sourceRef}"></canvas>
+        </div>`;
     })
     .join('');
 
@@ -709,7 +732,13 @@ function drawTimeline(timeline) {
   const focusHeight = 40;
   const gap = 8;
   const mouseTop = focusHeight + gap;
-  const mouseHeight = canvas.height - mouseTop;
+  // Keys and clicks get their own band under the mouse trace. An unmeasured
+  // session gives the band back to the mouse rather than drawing an empty
+  // strip that looks like a lull.
+  const measured = Boolean(timeline?.inputMeasured);
+  const densityHeight = measured ? 28 : 0;
+  const densityTop = canvas.height - densityHeight;
+  const mouseHeight = densityTop - mouseTop - (measured ? gap : 0);
 
   ctx.clearRect(0, 0, width, canvas.height);
   if (!timeline || timeline.durationMs <= 0) {
@@ -730,19 +759,57 @@ function drawTimeline(timeline) {
     ctx.fillRect(x(interval.startMs), 0, Math.max(1, x(interval.endMs) - x(interval.startMs)), focusHeight);
   }
 
+  const barWidth = Math.max(1, width / timeline.buckets.length);
   const peak = Math.max(1, ...timeline.buckets.map((b) => b.mouseMovement));
   ctx.fillStyle = '#4c78a8';
   for (const bucket of timeline.buckets) {
     const height = (bucket.mouseMovement / peak) * mouseHeight;
-    ctx.fillRect(x(bucket.startMs), mouseTop + (mouseHeight - height), Math.max(1, width / timeline.buckets.length), height);
+    ctx.fillRect(x(bucket.startMs), mouseTop + (mouseHeight - height), barWidth, height);
   }
 
-  $('preview-legend').innerHTML = top
-    .map(
-      (entry, index) =>
-        `<span class="legend"><i style="background:${FOCUS_COLOURS[index]}"></i>${entry.window} · ${hhmmss(entry.totalMs)}</span>`,
-    )
-    .join('') + '<span class="legend"><i style="background:#4c78a8"></i>mouse movement</span>';
+  if (measured) {
+    // Keys and clicks share one scale so the two are comparable against each
+    // other, and each is drawn from the band's baseline: keys upward, clicks
+    // as a darker overlay, so a burst of typing and a burst of clicking are
+    // told apart at a glance.
+    const inputPeak = Math.max(1, ...timeline.buckets.map((b) => Math.max(b.keys, b.clicks)));
+    for (const bucket of timeline.buckets) {
+      const left = x(bucket.startMs);
+      if (bucket.keys > 0) {
+        const height = (bucket.keys / inputPeak) * densityHeight;
+        ctx.fillStyle = KEY_COLOUR;
+        ctx.fillRect(left, densityTop + (densityHeight - height), barWidth, height);
+      }
+      if (bucket.clicks > 0) {
+        // Drawn at a floor of 2px wide and 3px tall rather than scaled like
+        // the keys. At 1200 buckets a bar is under a pixel across, and a
+        // handful of clicks against a peak of typing rounds to a sliver that
+        // vanishes behind the yellow -- which is how this band first shipped
+        // showing a clicks legend and no clicks.
+        const height = Math.max(3, (bucket.clicks / inputPeak) * densityHeight);
+        ctx.fillStyle = CLICK_COLOUR;
+        ctx.fillRect(left, densityTop + (densityHeight - height), Math.max(2, barWidth), height);
+      }
+    }
+  }
+
+  const legend = top.map(
+    (entry, index) =>
+      `<span class="legend"><i style="background:${FOCUS_COLOURS[index]}"></i>${entry.window} · ${hhmmss(entry.totalMs)}</span>`,
+  );
+  legend.push('<span class="legend"><i style="background:#4c78a8"></i>mouse movement</span>');
+  if (measured) {
+    legend.push(`<span class="legend"><i style="background:${KEY_COLOUR}"></i>keystrokes</span>`);
+    legend.push(`<span class="legend"><i style="background:${CLICK_COLOUR}"></i>clicks</span>`);
+  }
+  $('preview-legend').innerHTML = legend.join('');
+
+  // Said plainly rather than drawn as zeroes: a session recorded before the
+  // input listener existed has no counts at all, and a flat empty band would
+  // read as a session where nobody typed.
+  $('preview-activity-note').textContent = measured
+    ? ''
+    : 'Keystrokes and clicks were not measured for this session: it was recorded before the input listener existed.';
 
   canvas.onclick = (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -870,11 +937,8 @@ async function controlPuller(action) {
 
 // ------------------------------------------------------------------ waveforms
 
-/** Lane height in CSS pixels. Tall enough to read, short enough to stack many. */
-const LANE_HEIGHT = 56;
-
 /**
- * Draws one lane per audio source, stacked on a shared time scale.
+ * Paints the lane inside each source row, on a shared time scale.
  *
  * The peaks are fetched, not computed here: the agent already measured them
  * during the render pass, so a four-hour session draws immediately instead of
@@ -885,8 +949,6 @@ const LANE_HEIGHT = 56;
  * would read as a silent microphone rather than an unmeasured one.
  */
 async function drawWaveforms(sessionId, status) {
-  const holder = $('preview-waveforms');
-  holder.innerHTML = '';
   state.peaksBySource.clear();
 
   if (!status.audioSources.length) {
@@ -897,24 +959,20 @@ async function drawWaveforms(sessionId, status) {
   $('preview-waveform-note').textContent = 'Click any lane to move every track to that moment.';
 
   for (const source of status.audioSources) {
-    const lane = document.createElement('div');
-    lane.className = 'wave-lane';
-
-    const label = document.createElement('span');
-    label.className = 'wave-label';
-    label.textContent = source.sourceRef;
-
-    const canvas = document.createElement('canvas');
-    canvas.height = LANE_HEIGHT;
-    canvas.className = 'wave-canvas';
-    canvas.dataset.sourceRef = source.sourceRef;
-
-    lane.append(label, canvas);
-    holder.append(lane);
+    // The lane was written into the page by renderSources, beside the button
+    // that selects this source. Missing means the status changed underneath
+    // us; skip rather than paint a lane nothing can see.
+    const canvas = document.querySelector(
+      `canvas.wave-canvas[data-source-ref="${CSS.escape(source.sourceRef)}"]`,
+    );
+    if (!canvas) continue;
 
     // Each lane seeks every track, so the operator can click the waveform
     // they are reading rather than hunting for the video scrubber.
     canvas.onclick = (event) => {
+      // The lane sits inside the source row: without this, seeking would also
+      // select the source and POST a preference the operator never expressed.
+      event.stopPropagation();
       const rect = canvas.getBoundingClientRect();
       seekAll((event.clientX - rect.left) / rect.width);
     };

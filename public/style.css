@@ -373,11 +373,23 @@ td.src {
   border-radius: 4px;
 }
 
+/* Rows stack rather than wrap: every lane shares one horizontal time scale
+   with the activity timeline below, which only holds if they are full width
+   and vertically aligned. */
 #preview-sources {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
-  align-items: stretch;
+}
+
+/* The description above, its lane below. Stacked rather than side by side:
+   anything sitting beside a lane pushes it inward by that element's width,
+   and the lane would no longer start at the same x as the activity timeline
+   or span the same distance as the video's duration. */
+.source-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 #preview-sources button.source {
@@ -390,6 +402,18 @@ td.src {
   border-radius: 4px;
   background: #fff;
   cursor: pointer;
+  /* Hugs its text rather than stretching: a full-width button over a
+     full-width lane reads as one enormous control. */
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+/* A PulseAudio source name is long; keep it on one line so a wrapped name
+   cannot change the height of one description and misalign the lanes. */
+#preview-sources button.source .src {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 #preview-sources button.source.active {
@@ -403,9 +427,8 @@ td.src {
   color: #5f6368;
 }
 
-/* The panel note must span the row rather than sit beside a source button. */
+/* Sits below the last source row, as its own item in the column. */
 #preview-sources .note {
-  flex-basis: 100%;
   margin: 4px 0 0;
 }
 
@@ -437,23 +460,10 @@ td.src {
   display: inline-block;
 }
 
-/* One waveform lane per audio source, stacked on a shared time scale. */
-.wave-lane {
-  margin: 0 0 6px;
-}
-
-.wave-label {
-  display: block;
-  font-size: 12px;
-  color: #5f6368;
-  margin-bottom: 2px;
-  /* A PulseAudio source name is long; keep it on one line so lanes stay
-     aligned with each other and with the activity timeline below. */
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
+/* Full width, edge to edge with the activity timeline below it. This is what
+   makes the alignment true: every lane and the timeline are the same width
+   and start at the same x, so one instant sits at one horizontal position
+   across every waveform, the keystroke band, and the video's own scrubber. */
 .wave-canvas {
   display: block;
   width: 100%;

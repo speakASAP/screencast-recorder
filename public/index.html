@@ -145,16 +145,21 @@
 
         <p id="preview-render-note" class="note"></p>
 
+        <!--
+          One block per audio source: the button that makes it audible and
+          reports its measured level, with that source's waveform lane full
+          width beneath it. Sources and waveforms were two sections listing
+          the same devices, which put every source name on the screen twice
+          and separated each lane from the control that selects it.
+
+          Every lane spans the full width, as does the activity timeline
+          below, so one instant sits at one horizontal position across all of
+          them and the video. Nothing may sit beside a lane: it would push the
+          lane inward and break that alignment. Clicking any lane seeks every
+          track; clicking the button above it only changes which is audible.
+        -->
         <h3>Audio sources</h3>
         <div id="preview-sources"></div>
-
-        <!--
-          One lane per audio source, stacked on a shared horizontal time
-          scale so the same instant lines up across every track and the
-          activity timeline below. Clicking any lane seeks all of them.
-        -->
-        <h3>Waveforms</h3>
-        <div id="preview-waveforms"></div>
         <p id="preview-waveform-note" class="note"></p>
 
         <h3>Activity</h3>

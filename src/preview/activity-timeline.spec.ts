@@ -1,7 +1,20 @@
 import { buildTimeline, parseSamples, redactStoredTitle } from './activity-timeline';
 
-const line = (ts: number, window: string, mouse: [number, number] | null) =>
-  JSON.stringify({ ts, display: 'HDMI-A-0', window, mouse, clicks: 0, keys: 0, hotkeys: [] });
+const line = (
+  ts: number,
+  window: string,
+  mouse: [number, number] | null,
+  counts: { keys?: number; clicks?: number; hotkeys?: string[] } = {},
+) =>
+  JSON.stringify({
+    ts,
+    display: 'HDMI-A-0',
+    window,
+    mouse,
+    clicks: counts.clicks ?? 0,
+    keys: counts.keys ?? 0,
+    hotkeys: counts.hotkeys ?? [],
+  });
 
 describe('parseSamples', () => {
   it('skips a truncated trailing line rather than throwing', () => {
@@ -40,12 +53,47 @@ describe('buildTimeline', () => {
     expect(buildTimeline(samples, 4).topWindows[0].window).toBe('B');
   });
 
-  it('never reports keys or clicks, which are not captured', () => {
-    // countKey/countClick have no caller in agent/src, so every stored session
-    // reports zeroes. Emitting a zero here would read as a quiet session
-    // rather than an absent feature. See the defect in TASKS.md.
-    const timeline = buildTimeline(parseSamples(line(1000, 'A', [0, 0])), 1);
-    expect(JSON.stringify(timeline)).not.toMatch(/"keys"|"clicks"/);
+  it('sums keys and clicks into the bucket', () => {
+    const samples = parseSamples(
+      [
+        line(1000, 'A', [0, 0], { keys: 3, clicks: 1 }),
+        line(1000.2, 'A', [0, 0], { keys: 4, clicks: 1 }),
+      ].join('\n'),
+    );
+    const bucket = buildTimeline(samples, 1).buckets[0];
+    expect(bucket.keys).toBe(7);
+    expect(bucket.clicks).toBe(2);
+  });
+
+  it('reports a session with no counts anywhere as unmeasured', () => {
+    // Sessions recorded before the input listener existed read zero on every
+    // sample. Drawing those zeroes would say "quiet" when the truth is that
+    // the signal was never recorded, so the console needs them flagged.
+    const samples = parseSamples([line(1000, 'A', [0, 0]), line(1000.2, 'A', [3, 4])].join('\n'));
+    expect(buildTimeline(samples, 1).inputMeasured).toBe(false);
+  });
+
+  it('reports a session as measured on the strength of one count', () => {
+    const samples = parseSamples(
+      [line(1000, 'A', [0, 0]), line(1000.2, 'A', [0, 0], { clicks: 1 })].join('\n'),
+    );
+    expect(buildTimeline(samples, 1).inputMeasured).toBe(true);
+  });
+
+  it('treats a hotkey as evidence the listener was running', () => {
+    // A modifier combination is recorded as a hotkey; the sample it lands in
+    // can still show a zero key total, and that is not an unmeasured session.
+    const samples = parseSamples(line(1000, 'A', [0, 0], { hotkeys: ['ctrl+key'] }));
+    expect(buildTimeline(samples, 1).inputMeasured).toBe(true);
+  });
+
+  it('survives a stored line that predates the count fields', () => {
+    // An early JSONL line omits keys/clicks entirely. Adding undefined to a
+    // running total would poison the bucket with NaN.
+    const stored = JSON.stringify({ ts: 1000, display: 'HDMI-A-0', window: 'A', mouse: [0, 0] });
+    const bucket = buildTimeline(parseSamples(stored), 1).buckets[0];
+    expect(bucket.keys).toBe(0);
+    expect(bucket.clicks).toBe(0);
   });
 });
 

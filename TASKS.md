@@ -63,13 +63,25 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   repository had no `post-commit` hook, so none of its commits ever reached the
   deploy queue.
 
-- [x] **Fixed: the activity tracker now counts keystrokes and clicks.** An
-  XInput2 listener (`agent/src/activity/input-listener.ts`) feeds the existing
-  counters. Verified on the live desktop rather than in isolation, which is how
-  the original defect escaped: five synthetic `a` presses plus `ctrl+s` plus two
-  clicks produced `keys=7 clicks=2 hotkeys=["ctrl+key"]`. The keycode is
-  discarded at parse time and replaced by an opaque placeholder, so a
-  combination is visible as `ctrl+key` while the character is never recorded.
+- [x] **Fixed: keystroke and click density is captured and now visible.** In
+  two parts, and the gap between them is the lesson. An XInput2 listener
+  (`agent/src/activity/input-listener.ts`) feeds the existing counters:
+  verified on the live desktop rather than in isolation, five synthetic `a`
+  presses plus `ctrl+s` plus two clicks produced
+  `keys=7 clicks=2 hotkeys=["ctrl+key"]`. The keycode is discarded at parse
+  time and replaced by an opaque placeholder, so a combination is visible as
+  `ctrl+key` while the character is never recorded.
+
+  That fix was recorded as complete while no operator could see a keystroke.
+  `buildTimeline` still dropped both counters at bucket construction, so the
+  console drew mouse movement alone and the preview screen carried a hardcoded
+  note saying density was not captured — months after it was. The counters now
+  reach the browser and are drawn as their own band under the mouse trace.
+  Sessions recorded before the listener existed report `inputMeasured: false`
+  and say so in words, rather than drawing zeroes that would read as a quiet
+  session. A component verified in isolation is not a delivered feature; this
+  one was checked end to end, on the screen, against both an old session and a
+  new one.
 
 - [x] Phase 1 delivered and validated end to end on 2026-09-07. Deployed at
   `screencast.alfares.cz` (image `7f23ec3`), agent running as a systemd user
