@@ -55,17 +55,46 @@ SECRET_ID="$(VAULT_ADDR="$VAULT_ADDR" VAULT_TOKEN="$WRAP_TOKEN" vault unwrap -fi
 
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 umask 077
-cat > "$CONFIG_FILE" <<EOF
-{
-  "apiUrl": "${API_URL}",
-  "vaultAddr": "${VAULT_ADDR}",
-  "roleId": "${ROLE_ID}",
-  "secretId": "${SECRET_ID}",
-  "recordingDir": "${HOME}/recordings",
-  "minFreeGb": 20,
-  "version": "0.1.0"
-}
-EOF
+
+# Merged, never overwritten. A reinstall re-issues the Vault credentials, but
+# everything the operator set by hand -- cameraUrl above all -- must survive
+# it. Writing the file wholesale silently dropped cameraUrl on an upgrade and
+# left the camera feed unusable with no error to explain why.
+CONFIG_FILE="$CONFIG_FILE" \
+API_URL="$API_URL" VAULT_ADDR="$VAULT_ADDR" \
+ROLE_ID="$ROLE_ID" SECRET_ID="$SECRET_ID" HOME_DIR="$HOME" \
+python3 - <<'PYEOF'
+import json, os, pathlib
+
+path = pathlib.Path(os.environ["CONFIG_FILE"])
+config = {}
+if path.exists():
+    try:
+        config = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        # A corrupt file is replaced rather than inherited, but the operator is
+        # told, because losing cameraUrl silently is the failure this prevents.
+        print("   existing config was not valid JSON; writing a fresh one")
+
+# Managed by the installer: these are re-issued on every run.
+config.update({
+    "apiUrl": os.environ["API_URL"],
+    "vaultAddr": os.environ["VAULT_ADDR"],
+    "roleId": os.environ["ROLE_ID"],
+    "secretId": os.environ["SECRET_ID"],
+})
+
+# Defaults only. An operator value already present is left alone.
+config.setdefault("recordingDir", os.path.join(os.environ["HOME_DIR"], "recordings"))
+config.setdefault("minFreeGb", 20)
+config.setdefault("version", "0.1.0")
+
+path.write_text(json.dumps(config, indent=2) + "\n")
+
+kept = [k for k in ("cameraUrl", "cameraDevice") if k in config]
+if kept:
+    print(f"   kept operator settings: {', '.join(kept)}")
+PYEOF
 chmod 600 "$CONFIG_FILE"
 unset SECRET_ID WRAP_TOKEN
 
