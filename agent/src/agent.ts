@@ -46,6 +46,12 @@ export interface AgentDeps {
     /** Queue depth and failure count for the continuous uploader. */
     uploadHealth(): { queued: number; failures: number; oldestPendingMs: number | null };
     /**
+     * Deletes every object continuous upload already wrote for one session.
+     * Called only from `abort` when the API supplies a prefix, i.e. only on
+     * an operator's explicit Discard. Never touches local media.
+     */
+    purgeUploads(prefix: string): Promise<number>;
+    /**
      * Renders the preview set for a stored session: a silent video proxy plus
      * one audio proxy per capture source. Read-only on session media -- it
      * writes new objects under `<prefix>/preview/` and deletes nothing.
@@ -148,7 +154,7 @@ export class Agent {
       case 'stop':
         return this.stop();
       case 'abort':
-        return this.abort();
+        return this.abort(command);
       case 'upload':
         return this.upload(command);
       case 'render-preview':
@@ -310,8 +316,34 @@ export class Agent {
     }
   }
 
-  private async abort(): Promise<void> {
+  /**
+   * The operator chose Discard.
+   *
+   * Local media is never touched here -- Discard has never deleted it and
+   * still does not. Continuous upload, though, may already have written
+   * segments to storage before the operator decided to reject the session,
+   * so when the API supplies the prefix it did the uploading under, those
+   * objects are purged. A purge failure is logged and swallowed rather than
+   * thrown: the operator has already moved on, and there is no local-side
+   * action left to take.
+   */
+  private async abort(command?: Command): Promise<void> {
     if (this.deps.capture.isRunning()) await this.deps.capture.stop();
+
+    const prefix = command?.payload.prefix as string | undefined;
+    if (prefix) {
+      await this.deps.capture
+        .purgeUploads(prefix)
+        .then((count) => log(`purged ${count} uploaded objects for a discarded session`))
+        .catch((error) => console.error('purge failed:', (error as Error).message));
+    }
+
+    // Cleared unconditionally, not only when a prefix was purged: if this is
+    // left set, the next tick's sweep re-uploads whatever `sessions.trackDirs()`
+    // still finds closed on disk, re-creating the very objects a purge above
+    // may just have deleted -- an endless delete/re-upload fight against a
+    // session the operator already rejected.
+    this.uploadPrefix = null;
     this.sessionId = null;
   }
 

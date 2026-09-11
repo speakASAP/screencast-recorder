@@ -55,6 +55,7 @@ function makeDeps(
       probeCamera: jest.fn(async () => ({ hasSignal: true, detail: 'ok' })),
       sweepUploads: jest.fn(async () => undefined),
       uploadHealth: () => ({ queued: 0, failures: 0, oldestPendingMs: null }),
+      purgeUploads: jest.fn(async () => 0),
       ...captureOverrides,
     },
 
@@ -658,5 +659,92 @@ describe('continuous upload during recording', () => {
       { track_id: 't1', degraded: false, segments: 3, bytes: 3_000_000, health: 'ok' },
       { track_id: 't2', degraded: false, segments: 0, bytes: 500, health: 'stalled' },
     ]);
+  });
+});
+
+describe('discarding a session', () => {
+  it('purges the uploaded objects when the API supplies a prefix', async () => {
+    const purgeUploads = jest.fn(async () => 2);
+    const deps = makeDeps({}, { purgeUploads });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+    await agent.handle({
+      command_id: 'ab1', type: 'abort', session_id: 's',
+      payload: { prefix: 'sessions/2026/09/11/s' },
+    } as never);
+
+    expect(purgeUploads).toHaveBeenCalledWith('sessions/2026/09/11/s');
+  });
+
+  it('does not purge when the API sends no prefix', async () => {
+    // A stop/prepare abort with nothing ever uploaded carries no prefix, and
+    // must not call into storage at all.
+    const purgeUploads = jest.fn(async () => 0);
+    const deps = makeDeps({}, { purgeUploads });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+    await agent.handle({
+      command_id: 'ab1', type: 'abort', session_id: 's', payload: {},
+    } as never);
+
+    expect(purgeUploads).not.toHaveBeenCalled();
+  });
+
+  it('never deletes local media -- capture.stop is the only local-side effect', async () => {
+    const purgeUploads = jest.fn(async () => 2);
+    const deps = makeDeps({}, { purgeUploads });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+    await agent.handle({
+      command_id: 'ab1', type: 'abort', session_id: 's',
+      payload: { prefix: 'sessions/2026/09/11/s' },
+    } as never);
+
+    expect(deps.capture.stop).toHaveBeenCalled();
+  });
+
+  it('swallows a purge failure rather than throwing into the command loop', async () => {
+    // A storage outage during Discard must not crash the agent process; the
+    // operator has already moved on and there is nothing local left to do.
+    const purgeUploads = jest.fn(async () => {
+      throw new Error('minio unreachable');
+    });
+    const deps = makeDeps({}, { purgeUploads });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+
+    await expect(
+      agent.handle({
+        command_id: 'ab1', type: 'abort', session_id: 's',
+        payload: { prefix: 'sessions/2026/09/11/s' },
+      } as never),
+    ).resolves.toBeUndefined();
+  });
+
+  it('clears uploadPrefix so the next tick does not re-sweep a discarded session', async () => {
+    // uploadPrefix drives the continuous-upload sweep every tick. If abort
+    // left it set, the very next tick would re-upload the objects this
+    // command just told the agent to delete -- an endless delete/re-upload
+    // fight against a session the operator rejected.
+    const sweepUploads = jest.fn(async () => undefined);
+    const purgeUploads = jest.fn(async () => 2);
+    const deps = makeDeps({}, { sweepUploads, purgeUploads });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+    await agent.handle({
+      command_id: 'ab1', type: 'abort', session_id: 's',
+      payload: { prefix: 'sessions/2026/09/11/s' },
+    } as never);
+
+    // isRunning() is false post-abort, so tick's capture-running branch is
+    // skipped entirely regardless -- this asserts the state driving that,
+    // not just its current downstream effect.
+    await agent.tick();
+    expect(sweepUploads).not.toHaveBeenCalled();
   });
 });

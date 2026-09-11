@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -16,6 +17,8 @@ export interface S3Like {
   list(prefix: string): Promise<string[]>;
   /** Downloads one object to a local path. Used by preview's storage fallback. */
   get(key: string, toPath: string): Promise<void>;
+  /** Deletes one object. Used only by the discard path in `purge.ts`. */
+  remove(key: string): Promise<void>;
 }
 
 export interface ExpectedObject {
@@ -38,10 +41,12 @@ export interface UploadResult {
 /**
  * Uploads a finished session and reads every object back.
  *
- * There is deliberately no delete path anywhere in this class. Local media is
- * the only copy of something that cannot be re-recorded, and removing it is a
- * separate, operator-gated action that happens after a preview -- not a
- * side effect of a successful upload.
+ * This class itself has no delete method: uploading and verifying a session
+ * must never also be the thing that removes data. `S3Like.remove` exists for
+ * one caller only -- `purge.ts`, invoked when the operator explicitly
+ * discards a session -- and nothing in `Uploader` calls it. Local media is
+ * untouched either way; that removal, if it ever happens, is a separate,
+ * operator-gated action, not a side effect of a successful upload.
  */
 export class Uploader {
   constructor(
@@ -217,6 +222,9 @@ export function s3Client(config: {
           ContentLength: size,
         }),
       );
+    },
+    async remove(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
     },
   };
 }

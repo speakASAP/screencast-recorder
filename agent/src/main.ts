@@ -32,6 +32,7 @@ import {
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ContinuousUploader } from './upload/continuous';
+import { purgePrefix } from './upload/purge';
 import { HealthTracker } from './capture/health';
 import { PendingStore } from './pending-store';
 
@@ -332,6 +333,24 @@ async function main(): Promise<void> {
           await continuousUploader.sweep(session.trackDirs(), prefix, hostname());
         },
         uploadHealth: () => continuousUploader.health(),
+        /**
+         * Deletes every object continuous upload already wrote for a
+         * discarded session. The only delete path in the agent -- reached
+         * only from `abort`, only when the API supplied a prefix, which
+         * happens only on an operator's explicit Discard.
+         */
+        async purgeUploads(prefix) {
+          const s3 = s3Client({
+            endpoint: credentials.minio.endpoint,
+            accessKeyId: credentials.minio.accessKeyId,
+            secretAccessKey: credentials.minio.secretAccessKey,
+            bucket: credentials.minio.bucket,
+          });
+          return purgePrefix(
+            { list: (p) => s3.list(p), remove: (key) => s3.remove(key) },
+            prefix,
+          );
+        },
       },
       clock: { check: checkClock },
       disk: {

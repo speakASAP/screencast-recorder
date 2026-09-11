@@ -132,6 +132,32 @@ describe('state transitions', () => {
     expect(commands.filter((c) => c.type === 'upload')).toHaveLength(0);
   });
 
+  it('carries the session prefix on the Abort command, so the agent can purge what continuous upload already wrote', async () => {
+    // Continuous upload means a discarded session can already have objects
+    // in the bucket by the time the operator rejects it. An Abort with an
+    // empty payload gives the agent nothing to purge, and it silently
+    // deletes nothing.
+    const { service, session, commands } = makeService({ agents: ['a'], state: SessionState.Review });
+    session.s3Prefix = 'sessions/2026/09/10/s1';
+
+    await service.discard('s1');
+
+    const abort = commands.find((c) => c.type === 'abort');
+    expect(abort?.payload).toEqual({ prefix: 'sessions/2026/09/10/s1' });
+  });
+
+  it('sends an undefined prefix when the session never got one', async () => {
+    // A session discarded before start ever assigned s3Prefix must not send
+    // a stale or fabricated value.
+    const { service, session, commands } = makeService({ agents: ['a'], state: SessionState.Review });
+    session.s3Prefix = null;
+
+    await service.discard('s1');
+
+    const abort = commands.find((c) => c.type === 'abort');
+    expect(abort?.payload).toEqual({ prefix: undefined });
+  });
+
   it('refuses to reopen a stored session', async () => {
     const { service } = makeService({ agents: ['a'], state: SessionState.Stored });
     await expect(service.save('s1')).rejects.toThrow();

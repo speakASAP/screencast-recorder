@@ -252,7 +252,13 @@ export class SessionsService {
     await this.sessions.save(session);
 
     for (const agentId of await this.participants(sessionId)) {
-      await this.commands.queue(agentId, CommandType.Abort, sessionId, {});
+      // Continuous upload can already have written objects to storage before
+      // the operator rejects the session, so the agent needs the prefix to
+      // know what to purge. An empty payload here left Discard deleting
+      // nothing: the agent's abort handler had no prefix to act on.
+      await this.commands.queue(agentId, CommandType.Abort, sessionId, {
+        prefix: session.s3Prefix ?? undefined,
+      });
     }
     return session;
   }
