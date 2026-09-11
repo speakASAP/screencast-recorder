@@ -120,3 +120,51 @@ describe('the activity tracker is actually fed by an input listener', () => {
     await session.stop('agent-1');
   });
 });
+
+describe('CaptureSession.trackDirs', () => {
+  it('is empty before start, because no tracks are known yet', () => {
+    const session = new CaptureSession({
+      sessionId: 'sess-2',
+      hostname: 'alfares',
+      display: ':0.0',
+      rootDir: '/home/ssf/recordings',
+      displays: [{ id: 'HDMI-A-0', width: 3840, height: 2160, x: 0, y: 0 }],
+    });
+
+    expect(session.trackDirs()).toEqual([]);
+  });
+
+  it('reports each started track with the directory its segments land in', async () => {
+    // The upload queue enumerates these while recording. If a directory here
+    // disagreed with trackDir(), uploaded keys would not match the layout the
+    // API verifies against.
+    //
+    // Metadata-only, and `spawnInput` stubbed: `StartOptions` is
+    // `{ spawnInput?: SpawnFn }` and overrides ONLY the activity listener. A
+    // screen or audio track here would spawn a real ffmpeg from the
+    // supervisor's own default spawn, which no option in this signature
+    // replaces. Follow the existing tests at the top of this file.
+    const session = new CaptureSession({
+      sessionId: 'sess-2',
+      hostname: 'alfares',
+      display: ':0.0',
+      rootDir: '/home/ssf/recordings',
+      displays: [{ id: 'HDMI-A-0', width: 3840, height: 2160, x: 0, y: 0 }],
+    });
+
+    await session.start(
+      [{ track_id: 'meta', kind: 'metadata', source_ref: 'activity', sample_hz: 5 }],
+      0,
+      {
+        spawnInput: () =>
+          ({ on: () => undefined, stdout: null, stderr: null, kill: () => true }) as never,
+      },
+    );
+
+    expect(session.trackDirs()).toEqual([
+      { trackId: 'meta', kind: 'metadata', dir: '/home/ssf/recordings/sess-2/alfares/metadata' },
+    ]);
+
+    await session.stop('agent-1');
+  });
+});

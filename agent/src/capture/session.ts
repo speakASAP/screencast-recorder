@@ -45,6 +45,13 @@ export interface SessionContext {
   displays: { id: string; width: number; height: number; x: number; y: number }[];
 }
 
+/** One live track and the directory its segments are being written into. */
+export interface LiveTrackDir {
+  trackId: string;
+  kind: string;
+  dir: string;
+}
+
 /**
  * One recording session on this host.
  *
@@ -250,6 +257,21 @@ export class CaptureSession {
     }
 
     return media;
+  }
+
+  /**
+   * Every started track with its output directory.
+   *
+   * The continuous uploader needs paths while capture is live; `states()`
+   * deliberately carries only counters. Exposed as this narrow view rather
+   * than by widening `tracks`, which is the session's own bookkeeping.
+   */
+  trackDirs(): LiveTrackDir[] {
+    return this.tracks.map((track) => ({
+      trackId: track.track_id,
+      kind: track.kind,
+      dir: this.trackDir(track),
+    }));
   }
 
   currentWindow(): string | null {
