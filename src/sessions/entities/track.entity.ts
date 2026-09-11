@@ -59,6 +59,13 @@ export class Track {
   @Column({ type: 'boolean', default: false })
   degraded!: boolean;
 
+  /**
+   * Capture health while recording: a track whose ffmpeg is alive but writing
+   * nothing reads `ok` from `degraded`, which only flips on process exit.
+   */
+  @Column({ type: 'text', default: 'ok' })
+  health!: 'ok' | 'stalled' | 'quiet';
+
   @Column({ type: 'text', default: UploadState.Pending })
   uploadState!: UploadState;
 }

@@ -7,15 +7,25 @@ import { Session, SessionState, isLegalTransition } from './entities/session.ent
 import { Track, TrackKind, UploadState } from './entities/track.entity';
 import { CreateSessionDto, ProgressDto, StatusDto } from './dto/session.dto';
 
+/** Live upload-queue health as last reported by an agent, held in memory. */
+export interface UploadHealth {
+  queued: number;
+  failures: number;
+  oldestPendingMs: number | null;
+}
+
 /** Live counters the console renders while a session runs and uploads. */
 export interface SessionProgress {
   segments: number;
   bytes: number;
   degraded: number;
+  stalled: number;
+  quiet: number;
   uploaded: number;
   total: number;
   freeDiskBytes: number | null;
   activeWindow: string | null;
+  upload: UploadHealth | null;
 }
 
 /**
@@ -49,6 +59,7 @@ export class SessionsService {
    */
   private readonly freeDisk = new Map<string, number>();
   private readonly activeWindow = new Map<string, string>();
+  private readonly uploadHealth = new Map<string, UploadHealth>();
 
   constructor(
     @InjectRepository(Session)
@@ -142,12 +153,16 @@ export class SessionsService {
     if (!allReady) return { accepted: true };
 
     const t0 = new Date(Date.now() + START_BARRIER_LEAD_SECONDS * 1000);
-    // Fixed here rather than at Save, and from the session's own startedAt if
-    // it already carries one (set by whatever scheduled this recording) rather
-    // than the barrier's t0. A session that starts before midnight and saves
-    // after it would otherwise be verified against a prefix nothing was
-    // uploaded to. Continuous upload also needs it now: the agent starts
-    // writing objects during recording, before Save is ever pressed.
+    // Fixed here rather than at Save, and computed before startedAt is
+    // assigned below: prefixFor reads session.startedAt, so if this ran after
+    // the assignment it would fall through to the barrier's own t0 instead of
+    // the session's real start date. Nothing in this codebase sets startedAt
+    // before this point today -- create() only sets title and state -- so the
+    // `??` guard on the next line is defensive rather than covering a real
+    // caller. A session that starts before midnight and saves after it would
+    // otherwise be verified against a prefix nothing was uploaded to.
+    // Continuous upload also needs it now: the agent starts writing objects
+    // during recording, before Save is ever pressed.
     session.s3Prefix = this.prefixFor(session);
     session.t0 = t0;
     session.startedAt = session.startedAt ?? t0;
@@ -179,6 +194,10 @@ export class SessionsService {
       track.segmentCount = update.segments;
       track.bytes = String(update.bytes);
       track.degraded = update.degraded ?? track.degraded;
+      // An older agent build sends no `health` at all; fall back to whatever
+      // is already on the row (itself defaulted to `ok`) rather than reading
+      // as stalled or undefined.
+      track.health = (update.health as Track['health']) ?? track.health ?? 'ok';
       await this.tracks.save(track);
     }
 
@@ -186,6 +205,13 @@ export class SessionsService {
     // above: a window title can carry a path, a customer name, or a credential.
     if (dto.free_disk_bytes !== undefined) this.freeDisk.set(sessionId, dto.free_disk_bytes);
     if (dto.active_window) this.activeWindow.set(sessionId, dto.active_window);
+    if (dto.upload_health) {
+      this.uploadHealth.set(sessionId, {
+        queued: dto.upload_health.queued,
+        failures: dto.upload_health.failures,
+        oldestPendingMs: dto.upload_health.oldest_pending_ms ?? null,
+      });
+    }
 
     return { accepted: true };
   }
@@ -248,10 +274,13 @@ export class SessionsService {
         segments: tracks.reduce((n, t) => n + t.segmentCount, 0),
         bytes: tracks.reduce((n, t) => n + Number(t.bytes), 0),
         degraded: tracks.filter((t) => t.degraded).length,
+        stalled: tracks.filter((t) => t.health === 'stalled').length,
+        quiet: tracks.filter((t) => t.health === 'quiet').length,
         uploaded: tracks.filter((t) => t.uploadState === UploadState.Verified).length,
         total: tracks.length,
         freeDiskBytes: this.freeDisk.get(sessionId) ?? null,
         activeWindow: this.activeWindow.get(sessionId) ?? null,
+        upload: this.uploadHealth.get(sessionId) ?? null,
       },
     });
   }

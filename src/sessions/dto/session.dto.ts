@@ -59,6 +59,13 @@ export class TrackProgressDto {
   @IsInt() @Min(0) segments!: number;
   @IsInt() @Min(0) bytes!: number;
   @IsOptional() @IsBoolean() degraded?: boolean;
+  @IsOptional() @IsIn(['ok', 'stalled', 'quiet']) health?: string;
+}
+
+export class UploadHealthDto {
+  @IsInt() @Min(0) queued!: number;
+  @IsInt() @Min(0) failures!: number;
+  @IsOptional() @IsInt() @Min(0) oldest_pending_ms?: number | null;
 }
 
 export class ProgressDto {
@@ -74,4 +81,7 @@ export class ProgressDto {
    * file path, a customer name, or a credential pasted into a terminal.
    */
   @IsOptional() @IsString() active_window?: string;
+
+  @IsOptional() @ValidateNested() @Type(() => UploadHealthDto)
+  upload_health?: UploadHealthDto;
 }

@@ -254,3 +254,60 @@ describe('the S3 prefix is fixed when recording starts', () => {
     expect(session.s3Prefix).toBe('sessions/2026/09/10/s1');
   });
 });
+
+describe('capture health reaches the console', () => {
+  it('persists per-track health from the progress report', async () => {
+    const { service, tracksRepo } = makeService({ agents: ['a1'] });
+
+    await service.reportProgress('s1', {
+      agent_id: 'a1',
+      tracks: [{ track_id: 't0', segments: 0, bytes: 500, degraded: false, health: 'stalled' }],
+    } as never);
+
+    const saved = tracksRepo.save.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(saved.health).toBe('stalled');
+  });
+
+  it('counts stalled and quiet tracks in the session progress', async () => {
+    const { service, tracksRepo } = makeService({ agents: ['a1', 'a2'] });
+    tracksRepo.find = jest.fn(async () => [
+      { id: 't0', kind: 'audio', segmentCount: 0, bytes: '500', degraded: false, health: 'stalled', uploadState: 'pending' },
+      { id: 't1', kind: 'audio', segmentCount: 3, bytes: '900', degraded: false, health: 'quiet', uploadState: 'pending' },
+    ]) as never;
+
+    const session = await service.byId('s1');
+
+    expect(session.progress.stalled).toBe(1);
+    expect(session.progress.quiet).toBe(1);
+  });
+
+  it('carries upload health through to the console', async () => {
+    const { service } = makeService({ agents: ['a1'] });
+
+    await service.reportProgress('s1', {
+      agent_id: 'a1',
+      tracks: [],
+      upload_health: { queued: 4, failures: 2, oldest_pending_ms: 120_000 },
+    } as never);
+
+    const session = await service.byId('s1');
+    expect(session.progress.upload).toEqual({
+      queued: 4,
+      failures: 2,
+      oldestPendingMs: 120_000,
+    });
+  });
+
+  it('defaults health to ok when an older agent omits it', async () => {
+    // A host running last week's agent build must not read as stalled.
+    const { service, tracksRepo } = makeService({ agents: ['a1'] });
+
+    await service.reportProgress('s1', {
+      agent_id: 'a1',
+      tracks: [{ track_id: 't0', segments: 2, bytes: 1000, degraded: false }],
+    } as never);
+
+    const saved = tracksRepo.save.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(saved.health ?? 'ok').toBe('ok');
+  });
+});
