@@ -21,3 +21,7 @@ __pycache__/
 package-lock.json.bak
 agent/dist/
 agent/node_modules/
+
+# Subagent-driven development scratch: ledgers, task briefs, review packages.
+# Git history is the durable record; this is working state for one plan run.
+.superpowers/
