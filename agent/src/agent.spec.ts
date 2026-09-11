@@ -53,6 +53,8 @@ function makeDeps(
       states: () => [],
       currentWindow: () => 'nvim',
       probeCamera: jest.fn(async () => ({ hasSignal: true, detail: 'ok' })),
+      sweepUploads: jest.fn(async () => undefined),
+      uploadHealth: () => ({ queued: 0, failures: 0, oldestPendingMs: null }),
       ...captureOverrides,
     },
 
@@ -74,14 +76,14 @@ const future = () => new Date(Date.now() + 1000).toISOString();
 const longPast = () => new Date(Date.now() - 60_000).toISOString();
 
 /** prepare + start, as the real protocol sequences them. */
-async function prepareAndStart(agent: Agent, sessionId = 's'): Promise<void> {
+async function prepareAndStart(agent: Agent, sessionId = 's', prefix?: string): Promise<void> {
   await agent.handle({
     command_id: `p-${sessionId}`, type: 'prepare', session_id: sessionId,
     payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
   } as never);
   await agent.handle({
     command_id: `c-${sessionId}`, type: 'start', session_id: sessionId,
-    payload: { t0: future() },
+    payload: { t0: future(), ...(prefix ? { prefix } : {}) },
   } as never);
 }
 
@@ -580,5 +582,81 @@ describe('command handling is visible in the log', () => {
     log.restore();
 
     expect(log.lines.join('\n')).toMatch(/already applied|ignored|duplicate/i);
+  });
+});
+
+describe('continuous upload during recording', () => {
+  /**
+   * `prepare` supplies the track list `start` needs to actually spawn
+   * capture (see "tracks come from prepare, not from start" above) -- a bare
+   * `start` fails with `no_tracks_prepared` and never reaches `tick()`'s
+   * capture-running branch. The brief's own draft of these four tests called
+   * `start` without a preceding `prepare` and so never exercised the sweep at
+   * all; `prepareAndStart` is reused here to actually put capture in the
+   * running state the tests are about.
+   */
+  it('sweeps uploads on every tick while capture runs', async () => {
+    const sweepUploads = jest.fn(async () => undefined);
+    const deps = makeDeps({}, { sweepUploads, uploadHealth: () => ({ queued: 0, failures: 0, oldestPendingMs: null }) });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'sessions/2026/09/11/s');
+    await agent.tick();
+
+    expect(sweepUploads).toHaveBeenCalledWith('sessions/2026/09/11/s');
+  });
+
+  it('keeps ticking when a sweep throws, because capture outranks upload', async () => {
+    // The rule the owner chose: an S3 outage must never stop a recording.
+    const sweepUploads = jest.fn(async () => {
+      throw new Error('minio unreachable');
+    });
+    const deps = makeDeps({}, { sweepUploads, uploadHealth: () => ({ queued: 3, failures: 2, oldestPendingMs: 90_000 }) });
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'p');
+
+    await expect(agent.tick()).resolves.toBeUndefined();
+  });
+
+  it('reports upload health so the console can alarm on it', async () => {
+    const deps = makeDeps(
+      {},
+      {
+        sweepUploads: jest.fn(async () => undefined),
+        uploadHealth: () => ({ queued: 3, failures: 2, oldestPendingMs: 90_000 }),
+      },
+    );
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'p');
+    await agent.tick();
+
+    const progress = deps.posted.filter((p) => p.path.endsWith('/progress')).pop();
+    expect(progress?.body.upload_health).toEqual({ queued: 3, failures: 2, oldest_pending_ms: 90_000 });
+  });
+
+  it('carries per-track health in the progress report', async () => {
+    const deps = makeDeps(
+      {},
+      {
+        sweepUploads: jest.fn(async () => undefined),
+        uploadHealth: () => ({ queued: 0, failures: 0, oldestPendingMs: null }),
+        states: () => [
+          { trackId: 't1', degraded: false, segments: 3, bytes: 3_000_000, health: 'ok' as const },
+          { trackId: 't2', degraded: false, segments: 0, bytes: 500, health: 'stalled' as const },
+        ],
+      },
+    );
+    const agent = new Agent(deps, { agentId: 'a1', minFreeGb: 1 });
+
+    await prepareAndStart(agent, 's', 'p');
+    await agent.tick();
+
+    const progress = deps.posted.filter((p) => p.path.endsWith('/progress')).pop();
+    expect(progress?.body.tracks).toEqual([
+      { track_id: 't1', degraded: false, segments: 3, bytes: 3_000_000, health: 'ok' },
+      { track_id: 't2', degraded: false, segments: 0, bytes: 500, health: 'stalled' },
+    ]);
   });
 });

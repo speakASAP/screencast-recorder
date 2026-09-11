@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { statfs } from 'node:fs/promises';
 import { Agent, Command } from './agent';
 import { ApiClient } from './api-client';
@@ -31,6 +31,9 @@ import {
 } from './preview/renderer';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ContinuousUploader } from './upload/continuous';
+import { HealthTracker } from './capture/health';
+import { PendingStore } from './pending-store';
 
 /**
  * Entry point for the host recording agent.
@@ -72,6 +75,41 @@ async function main(): Promise<void> {
 
   let session: CaptureSession | null = null;
   let activeSessionId: string | null = null;
+
+  // Uploads closed segments while a recording is still running, so a crash
+  // loses at most the open segment instead of the whole session. One instance
+  // for the agent's lifetime: its `done`/`firstSeen` bookkeeping is what makes
+  // a segment upload exactly once across repeated sweeps.
+  const continuousUploader = new ContinuousUploader({
+    listDir: (dir) => readdir(dir),
+    sizeOf: (path) => stat(path).then((s) => s.size),
+    async upload(path, key, bytes) {
+      const uploader = new Uploader(
+        s3Client({
+          endpoint: credentials.minio.endpoint,
+          accessKeyId: credentials.minio.accessKeyId,
+          secretAccessKey: credentials.minio.secretAccessKey,
+          bucket: credentials.minio.bucket,
+        }),
+        credentials.minio.bucket,
+      );
+      await uploader.uploadFile(path, key, bytes);
+    },
+  });
+
+  // Per-track stall/quiet detection, folded into `states()` below. One
+  // instance for the agent's lifetime: it compares each sample against the
+  // previous tick, so a fresh tracker per tick would never see a delta.
+  const healthTracker = new HealthTracker();
+
+  // Deliberately outside any session directory: a later task deletes a
+  // session's directory on Discard, and this queue must survive that.
+  const pendingStore = new PendingStore({
+    read: () =>
+      readFile(join(config.recordingDir, '.pending-reports.json'), 'utf8').catch(() => null),
+    write: (contents) => writeFile(join(config.recordingDir, '.pending-reports.json'), contents),
+  });
+  const initialPending = await pendingStore.load();
 
   const agent = new Agent(
     {
@@ -262,8 +300,38 @@ async function main(): Promise<void> {
           }
         },
         isRunning: () => session?.isRunning() ?? false,
-        states: () => session?.states() ?? [],
+        /**
+         * Merges each track's stall/quiet verdict into the same rows
+         * `states()` has always returned, keyed by trackId so a track the
+         * tracker has not seen yet (the very first tick after start) simply
+         * carries no `health` and the agent's default of `'ok'` applies.
+         */
+        states() {
+          const rows = session?.states() ?? [];
+          if (!session) return rows;
+
+          const dirsByTrack = new Map(session.trackDirs().map((t) => [t.trackId, t.kind]));
+          const health = healthTracker.observe(
+            rows.map((r) => ({
+              trackId: r.trackId,
+              kind: dirsByTrack.get(r.trackId) ?? 'metadata',
+              bytes: r.bytes,
+            })),
+          );
+
+          return rows.map((r) => ({ ...r, health: health.get(r.trackId) }));
+        },
         currentWindow: () => session?.currentWindow() ?? null,
+        /**
+         * Uploads closed segments for the running session. Never throws:
+         * `ContinuousUploader.sweep` swallows every per-file failure itself,
+         * and there is no live session to sweep before `start` runs.
+         */
+        async sweepUploads(prefix) {
+          if (!session) return;
+          await continuousUploader.sweep(session.trackDirs(), prefix, hostname());
+        },
+        uploadHealth: () => continuousUploader.health(),
       },
       clock: { check: checkClock },
       disk: {
@@ -279,8 +347,10 @@ async function main(): Promise<void> {
         });
         api.setBearer(credentials.agentBearer);
       },
+      pendingStore: { save: (reports) => pendingStore.save(reports) },
     },
     { agentId, minFreeGb: config.minFreeGb },
+    initialPending,
   );
 
   // Two independent loops. Polling must not be delayed by a slow progress

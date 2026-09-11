@@ -31,10 +31,20 @@ export interface AgentDeps {
     puller(action: 'start' | 'stop' | 'status'): Promise<Record<string, unknown>>;
     stop(): Promise<void>;
     isRunning(): boolean;
-    states(): { trackId: string; degraded: boolean; segments: number; bytes: number }[];
+    states(): {
+      trackId: string;
+      degraded: boolean;
+      segments: number;
+      bytes: number;
+      health?: 'ok' | 'stalled' | 'quiet';
+    }[];
     currentWindow(): string | null;
     /** Uploads a stopped session under the given prefix and verifies readback. */
     upload(sessionId: string, prefix: string): Promise<{ objects: number; bytes: number; verified: boolean }>;
+    /** Uploads closed segments for a running session. Never throws. */
+    sweepUploads(prefix: string): Promise<void>;
+    /** Queue depth and failure count for the continuous uploader. */
+    uploadHealth(): { queued: number; failures: number; oldestPendingMs: number | null };
     /**
      * Renders the preview set for a stored session: a silent video proxy plus
      * one audio proxy per capture source. Read-only on session media -- it
@@ -51,6 +61,13 @@ export interface AgentDeps {
   };
   disk: { freeBytes(): Promise<number> };
   reloadCredentials(): Promise<void>;
+  /**
+   * Durable backing for the pending-report queue, so a report queued during
+   * an outage survives a process restart rather than dying with `this.pending`.
+   * Optional: every existing test and caller that has no durable store keeps
+   * working with in-memory-only queueing.
+   */
+  pendingStore?: { save(reports: PendingReport[]): Promise<void> };
 }
 
 export interface AgentConfig {
@@ -86,16 +103,29 @@ function log(message: string): void {
 export class Agent {
   /** command_ids already applied, so at-least-once delivery is safe. */
   private readonly applied = new Set<string>();
-  private readonly pending: PendingReport[] = [];
+  private readonly pending: PendingReport[];
   /** Tracks supplied by `prepare`; `start` carries only t0. */
   private preparedTracks: unknown[] = [];
   private sessionId: string | null = null;
+  private uploadPrefix: string | null = null;
   private reloadedForThisOutage = false;
 
   constructor(
     private readonly deps: AgentDeps,
     private readonly config: AgentConfig,
-  ) {}
+    // Reports a prior process queued and never delivered, read from the
+    // durable store at startup. Optional so every existing call site -- and
+    // every test that constructs an `Agent` directly -- keeps compiling.
+    initialPending: PendingReport[] = [],
+  ) {
+    this.pending = [...initialPending];
+  }
+
+  /** Persists the queue after it changes. Never awaited by a caller that must
+   * not stall on disk I/O; `PendingStore.save` never throws. */
+  private persistPending(): void {
+    void this.deps.pendingStore?.save(this.pending);
+  }
 
   async handle(command: Command): Promise<void> {
     // A redelivered start would spawn a second ffmpeg tree writing into the
@@ -198,6 +228,8 @@ export class Agent {
     }
 
     this.sessionId = command.session_id;
+    // Sent by the API at start so segments can upload during the recording.
+    this.uploadPrefix = (command.payload.prefix as string | undefined) ?? null;
     await waitUntil(t0);
 
     try {
@@ -303,6 +335,16 @@ export class Agent {
         return;
       }
 
+      if (this.uploadPrefix) {
+        // Swallowed deliberately. Local media is the durable copy; a storage
+        // outage must not reach ffmpeg or end the tick loop.
+        await this.deps.capture
+          .sweepUploads(this.uploadPrefix)
+          .catch((error) => console.error('upload sweep failed:', (error as Error).message));
+      }
+
+      const upload = this.deps.capture.uploadHealth();
+
       await this.report(
         this.sessionId,
         {
@@ -313,7 +355,13 @@ export class Agent {
             // healthy recording looks stalled.
             segments: s.segments,
             bytes: s.bytes,
+            health: s.health ?? 'ok',
           })),
+          upload_health: {
+            queued: upload.queued,
+            failures: upload.failures,
+            oldest_pending_ms: upload.oldestPendingMs,
+          },
           free_disk_bytes: free,
           active_window: this.deps.capture.currentWindow(),
         },
@@ -348,6 +396,7 @@ export class Agent {
       // Queue rather than drop: the operator's view should catch up when the
       // controller returns, and progress is the only evidence a session is live.
       this.pending.push({ path, body: payload });
+      this.persistPending();
     }
   }
 
@@ -418,6 +467,7 @@ export class Agent {
       // the report would leave the row rendering forever with a finished
       // proxy sitting behind it.
       this.pending.push({ path, body: payload });
+      this.persistPending();
     }
   }
 
@@ -427,6 +477,7 @@ export class Agent {
       try {
         await this.deps.api.post(next.path, next.body);
         this.pending.shift();
+        this.persistPending();
       } catch {
         // Still down. Keep the queue for the next tick; never let this throw
         // into the caller and interrupt capture.
