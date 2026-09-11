@@ -203,3 +203,66 @@ describe('the review lede reflects what has actually been uploaded', () => {
     expect(app).toContain("$('review-lede')");
   });
 });
+
+describe('the recording screen alarms when capture or upload is failing', () => {
+  it('declares the banner in the page', () => {
+    expect(html).toContain('id="capture-alarm"');
+    expect(html).toContain('id="alarm-detail"');
+  });
+
+  it('drives the banner from the health the API reports', () => {
+    // A track whose ffmpeg is alive but writing nothing looked healthy for a
+    // whole 21-minute session.
+    expect(app).toContain("$('capture-alarm')");
+    expect(app).toMatch(/progress\.stalled/);
+    expect(app).toMatch(/progress\.upload/);
+  });
+
+  it('names the failing track rather than only counting them', () => {
+    // "1 track stalled" sends the operator hunting; the source ref does not.
+    const fn = app.slice(app.indexOf('function renderAlarm'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    expect(body).toMatch(/sourceRef/);
+  });
+
+  it('renders a stalled track distinctly in the track table', () => {
+    const fn = app.slice(app.indexOf('function renderTracks'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    expect(body).toMatch(/stalled/);
+  });
+
+  it('judges upload trouble on the current queue, not the lifetime failure count', () => {
+    // upload.failures is incremented on every failed upload attempt and never
+    // reset (agent/src/upload/continuous.ts) -- it is a lifetime counter. A
+    // single transient failure at minute 3 would latch this condition true for
+    // the rest of the recording even after the queue drains to zero, so the
+    // banner must not key off it. queued > 0 reflects current pending work.
+    const fn = app.slice(app.indexOf('function renderAlarm'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    const uploadStuckLine = body
+      .split('\n')
+      .find((line) => line.includes('uploadStuck ='));
+    expect(uploadStuckLine).toBeDefined();
+    expect(uploadStuckLine).toMatch(/upload\.queued/);
+    expect(uploadStuckLine).not.toMatch(/upload\.failures/);
+  });
+
+  it('never frames upload trouble as data loss', () => {
+    const fn = app.slice(app.indexOf('function renderAlarm'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    expect(body).toMatch(/safe on disk/i);
+  });
+
+  it('uses the existing colour tokens rather than introducing new hex values', () => {
+    const css = readFileSync(join(__dirname, '..', '..', 'public', 'style.css'), 'utf8');
+    // Spans the whole capture-alarm section, not just the first rule: the
+    // critical (dead/stalled) state and the base (upload-only) state are
+    // deliberately different tokens, and both must come from the existing
+    // palette rather than a hardcoded hex.
+    const sectionStart = css.indexOf('capture alarm');
+    const section = css.slice(sectionStart, css.indexOf('td.src', sectionStart));
+    expect(section).toMatch(/var\(--danger\)/);
+    expect(section).toMatch(/var\(--accent\)/);
+    expect(section).not.toMatch(/#[0-9a-fA-F]{3,6}/);
+  });
+});

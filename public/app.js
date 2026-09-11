@@ -258,6 +258,7 @@ async function pollSession() {
 
   $('rec-state').textContent = session.state;
   renderTracks(session);
+  renderAlarm(session);
 
   // Stop is legal only from `recording`. A session still in `preparing` --
   // a camera with no signal, an agent that never answered -- would otherwise
@@ -305,13 +306,24 @@ async function abandonSession() {
 function renderTracks(session) {
   const rows = (session.tracks || [])
     .map((t) => {
+      // `degraded` (ffmpeg exited) takes priority over `health`: a dead
+      // process is a harder failure than one still running but stalled.
+      // `stalled` (alive, capturing nothing) and `quiet` (alive, under the
+      // byte-rate floor) must render distinctly from plain "recording" --
+      // that distinction is the whole point of Task 9's per-track health,
+      // and folding it back into an undifferentiated status would put the
+      // console right back where a 21-minute silent microphone went unseen.
       const status = t.degraded
         ? '<span class="bad">degraded</span>'
-        : t.uploadState === 'verified'
-          ? '<span class="ok">verified</span>'
-          : session.state === 'recording'
-            ? 'recording'
-            : t.uploadState || '—';
+        : t.health === 'stalled'
+          ? '<span class="bad">stalled</span>'
+          : t.health === 'quiet'
+            ? '<span class="muted">quiet</span>'
+            : t.uploadState === 'verified'
+              ? '<span class="ok">verified</span>'
+              : session.state === 'recording'
+                ? 'recording'
+                : t.uploadState || '—';
 
       // The activity stream is one continuous JSONL file, not segments, so a
       // segment count of 0 would read as "captured nothing" for a track that
@@ -323,8 +335,10 @@ function renderTracks(session) {
             : '—'
           : `${t.segmentCount || 0}`;
 
+      const rowClass = t.degraded || t.health === 'stalled' ? ' class="bad"' : '';
+
       return `
-        <tr>
+        <tr${rowClass}>
           <td>${t.kind}</td>
           <td class="src">${t.sourceRef}</td>
           <td>${amount}</td>
@@ -335,6 +349,76 @@ function renderTracks(session) {
     .join('');
   $('track-table').querySelector('tbody').innerHTML =
     rows || '<tr><td colspan="5" class="muted">waiting for the first segment…</td></tr>';
+}
+
+/**
+ * The loud path. A track whose ffmpeg is alive but writing nothing reports
+ * healthy through `degraded`, which only flips when the process exits -- so a
+ * 21-minute session captured 914 KB on one microphone and said nothing.
+ *
+ * `stalled` and `degraded` are serious: nothing is being captured. `quiet` is
+ * advisory only -- a genuinely silent room produces a legitimately small
+ * stream, and the byte-rate floor behind it is deliberately untuned -- so it
+ * is worded as a suggestion to check, not a fault.
+ *
+ * Upload trouble is shown but never framed as data loss: the local files are
+ * the durable copy and the recording is safe on disk regardless of whether
+ * the upload queue is keeping up.
+ */
+function renderAlarm(session) {
+  const progress = session.progress || {};
+  const tracks = session.tracks || [];
+  const banner = $('capture-alarm');
+
+  const dead = tracks.filter((t) => t.degraded);
+  const stalled = tracks.filter((t) => !t.degraded && t.health === 'stalled');
+  const quiet = tracks.filter((t) => !t.degraded && t.health === 'quiet');
+
+  // Named tracks come from `track.health`; `progress.stalled`/`progress.quiet`
+  // are the same facts pre-counted at the session level (Task 9). They should
+  // never disagree -- a mismatch would mean this function or the API dropped
+  // a track somewhere -- so this is a live cross-check, not decoration: if it
+  // ever fires, the banner text is under-reporting and needs to be believed
+  // less than the raw session-level count.
+  if (stalled.length !== (progress.stalled || 0) || quiet.length !== (progress.quiet || 0)) {
+    console.warn(
+      `renderAlarm: per-track health (${stalled.length} stalled, ${quiet.length} quiet) ` +
+        `disagrees with progress.stalled/progress.quiet ` +
+        `(${progress.stalled || 0} stalled, ${progress.quiet || 0} quiet).`,
+    );
+  }
+
+  const upload = progress.upload || null;
+
+  // `upload.failures` is a lifetime counter -- agent/src/upload/continuous.ts
+  // increments it on every failed attempt and never resets it, even after
+  // every segment since has uploaded and the queue is empty. Keying the
+  // banner off progress.upload.failures would latch the alarm on for the rest
+  // of the recording after one transient failure at minute 3, and an alarm
+  // that never clears is one the operator learns to ignore -- worse than no
+  // alarm. `queued` is current state: it only counts segments still pending
+  // right now, so it clears the moment the backlog actually drains.
+  const uploadStuck = upload && upload.queued > 0 && (upload.oldestPendingMs || 0) > 120000;
+
+  const messages = [];
+  if (dead.length) {
+    messages.push(`Capture stopped: ${dead.map((t) => t.sourceRef).join(', ')}.`);
+  }
+  if (stalled.length) {
+    messages.push(`Capturing nothing: ${stalled.map((t) => t.sourceRef).join(', ')}.`);
+  }
+  if (quiet.length) {
+    messages.push(`Very quiet, check the input: ${quiet.map((t) => t.sourceRef).join(', ')}.`);
+  }
+  if (uploadStuck) {
+    messages.push(
+      `Upload is behind: ${upload.queued} segment(s) waiting. The recording is safe on disk.`,
+    );
+  }
+
+  banner.hidden = messages.length === 0;
+  banner.classList.toggle('critical', dead.length > 0 || stalled.length > 0);
+  $('alarm-detail').textContent = messages.join(' ');
 }
 
 async function stopSession() {

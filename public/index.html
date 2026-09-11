@@ -75,6 +75,17 @@
         <h2>Recording</h2>
         <p class="big" id="elapsed">00:00:00</p>
         <p>State: <strong id="rec-state">—</strong></p>
+        <!--
+          A track whose ffmpeg is alive but writing nothing reports healthy
+          through `degraded`, which only flips when the process exits -- a
+          21-minute session captured 914 KB on one microphone and said
+          nothing. This banner is the fix: hidden while every track and the
+          upload queue are healthy, shown the moment either is not.
+        -->
+        <div id="capture-alarm" class="alarm" hidden>
+          <strong id="alarm-headline">Capture problem</strong>
+          <p id="alarm-detail"></p>
+        </div>
         <table id="track-table">
           <thead>
             <tr><th>Track</th><th>Source</th><th>Segments</th><th>Size</th><th>Status</th></tr>

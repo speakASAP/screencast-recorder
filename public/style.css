@@ -335,6 +335,43 @@ td .bad,
   color: var(--danger);
 }
 
+/* ------------------------------------------------------------ capture alarm */
+
+/* Upload-only trouble: real, but never data loss (the local files are the
+   durable copy), so it borrows --accent -- the same token used elsewhere in
+   this file for in-progress/informational state -- rather than the danger
+   red reserved for a track that has actually stopped capturing. */
+.alarm {
+  border: 2px solid var(--accent);
+  background: var(--panel);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+/* A track whose ffmpeg is alive but writing nothing reported healthy through
+   `degraded` for a whole 21-minute session that captured 914 KB on one
+   microphone. `.critical` is what a dead or stalled track escalates to: it
+   uses --danger, the same token as every other failure state in this file,
+   so it reads as seriously as everything else that already means "wrong" in
+   this console -- and outranks the accent-coloured upload-only banner if
+   both are showing at once. */
+.alarm.critical {
+  border-color: var(--danger);
+  background: var(--line);
+}
+
+.alarm strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+
+.alarm.critical strong {
+  color: var(--danger);
+}
+
 /* Long PipeWire source ids would otherwise stretch the table off-screen. */
 td.src {
   max-width: 18rem;
