@@ -115,3 +115,77 @@ describe('what the uploader must never do', () => {
     expect(names.filter((n) => /delete|remove|rm|purge|unlink/i.test(n))).toEqual([]);
   });
 });
+
+describe('Uploader.uploadAll concurrency', () => {
+  it('uploads more than one object at a time', async () => {
+    // Serial upload of a 162 MB session took 3m12s against the external MinIO
+    // endpoint, almost all of it round-trip latency rather than bandwidth.
+    let inFlight = 0;
+    let peak = 0;
+    const s3 = fakeS3({
+      head: jest.fn(async () => null),
+      put: jest.fn(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+      }),
+    });
+    const uploader = new Uploader(s3, 'bucket', { retries: 1, backoffMs: 1, concurrency: 3 });
+
+    const files = Array.from({ length: 9 }, (_, i) => ({
+      path: `/local/seg-${i}`,
+      key: `p/seg-${i}`,
+      bytes: 10,
+    }));
+    await uploader.uploadAll(files);
+
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
+  it('uploads every file exactly once', async () => {
+    const s3 = fakeS3({ head: jest.fn(async () => null) });
+    const uploader = new Uploader(s3, 'bucket', { retries: 1, backoffMs: 1, concurrency: 3 });
+
+    const files = Array.from({ length: 7 }, (_, i) => ({
+      path: `/local/seg-${i}`,
+      key: `p/seg-${i}`,
+      bytes: 10,
+    }));
+    const result = await uploader.uploadAll(files);
+
+    expect(result.objects).toBe(7);
+    expect([...s3.puts].sort()).toEqual(files.map((f) => f.key).sort());
+  });
+
+  it('still reports a missing object after a concurrent run', async () => {
+    // Concurrency must not turn a failed verify into a pass.
+    const s3 = fakeS3({
+      head: jest.fn(async (key: string) => (key === 'p/seg-1' ? null : { contentLength: 10 })),
+    });
+    const uploader = new Uploader(s3, 'bucket', { retries: 1, backoffMs: 1, concurrency: 3 });
+
+    const result = await uploader.uploadAll([
+      { path: '/local/seg-0', key: 'p/seg-0', bytes: 10 },
+      { path: '/local/seg-1', key: 'p/seg-1', bytes: 10 },
+    ]);
+
+    expect(result.verified).toBe(false);
+    expect(result.missing).toEqual(['p/seg-1']);
+  });
+
+  it('propagates a failure that exhausts its retries', async () => {
+    const s3 = fakeS3({
+      head: jest.fn(async () => null),
+      put: jest.fn(async () => {
+        throw new Error('connection reset');
+      }),
+    });
+    const uploader = new Uploader(s3, 'bucket', { retries: 2, backoffMs: 1, concurrency: 3 });
+
+    await expect(
+      uploader.uploadAll([{ path: '/local/a', key: 'p/a', bytes: 10 }]),
+    ).rejects.toThrow(/upload failed after 2 attempts/);
+  });
+});

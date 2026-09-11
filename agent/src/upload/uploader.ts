@@ -47,9 +47,14 @@ export class Uploader {
   constructor(
     private readonly s3: S3Like,
     private readonly bucket: string,
-    private readonly options: { retries: number; backoffMs: number } = {
+    // `concurrency` is optional on the parameter type (rather than required,
+    // as plain object defaults would suggest) so existing callers that only
+    // ever cared about retries/backoff -- including tests written before this
+    // option existed -- keep compiling and fall back to the same default of 3.
+    private readonly options: { retries: number; backoffMs: number; concurrency?: number } = {
       retries: 5,
       backoffMs: 500,
+      concurrency: 3,
     },
   ) {}
 
@@ -87,6 +92,28 @@ export class Uploader {
   }
 
   /**
+   * Runs `worker` over `items` with at most `concurrency` in flight.
+   *
+   * Bounded rather than unbounded: a four-hour session is thousands of
+   * segments, and `Promise.all` over all of them would open thousands of
+   * sockets against MinIO at once.
+   */
+  private async pool<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
+    const queue = [...items];
+    const concurrency = this.options.concurrency ?? 3;
+    const runners = Array.from({ length: Math.min(concurrency, queue.length) }, () =>
+      (async () => {
+        for (;;) {
+          const item = queue.shift();
+          if (item === undefined) return;
+          await worker(item);
+        }
+      })(),
+    );
+    await Promise.all(runners);
+  }
+
+  /**
    * Independent readback of every object.
    *
    * Run after all uploads, as a separate pass: a PUT that returned success can
@@ -96,19 +123,22 @@ export class Uploader {
   async verify(expected: ExpectedObject[]): Promise<VerifyResult> {
     const missing: string[] = [];
 
-    for (const object of expected) {
+    await this.pool(expected, async (object) => {
       const head = await this.s3.head(object.key).catch(() => null);
       if (!head || head.contentLength !== object.bytes) missing.push(object.key);
-    }
+    });
 
+    // Sorted so a missing-object report is stable regardless of which worker
+    // happened to finish first.
+    missing.sort();
     return { verified: missing.length === 0, missing };
   }
 
   /** Uploads every file, then verifies the whole set. */
   async uploadAll(files: { path: string; key: string; bytes: number }[]): Promise<UploadResult> {
-    for (const file of files) {
+    await this.pool(files, async (file) => {
       await this.uploadFile(file.path, file.key, file.bytes);
-    }
+    });
 
     const result = await this.verify(files.map((f) => ({ key: f.key, bytes: f.bytes })));
 
