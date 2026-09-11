@@ -43,6 +43,24 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
 
 ## Completed
 
+- [x] **Continuous upload and capture-health alarms, 11 implementation commits
+  delivered and validated 2026-09-11.** Deployed at `screencast.alfares.cz`
+  (API/console), agent as systemd user unit. 503 tests across 46 suites, all
+  passing. A live session uploads segments to S3 continuously during `recording`,
+  so an agent restart loses up to 60 seconds instead of the entire session. Per-track
+  health checks detect stalled and quiet microphones and alarm within ~15 seconds.
+  Discard purges S3 objects scoped to that session while leaving local media intact.
+  Save now takes seconds instead of three-minute-plus. Evidence:
+  [`docs/12_validation/VAL-TASK-003-continuous-upload-and-alarms.md`](docs/12_validation/VAL-TASK-003-continuous-upload-and-alarms.md).
+  The 11 commits: T1 segment eligibility, T2 bounded-concurrency upload, T3 live
+  track directories, T4 S3 prefix fixed at start (API), T5 continuous upload
+  queue, T6 stall/quiet detection, T7 durable pending reports, T8 agent wiring
+  (all four modules), T9 API health + migration, T10 discard purges S3, T11
+  console alarm banner. Three contracts amended to reflect the deployed reality:
+  `SYSTEM.md` documents per-track upload state; `INTEGRATION_CONTRACT.md`
+  specifies Discard as the only phase-1 retention operation; the 2026-09-06
+  design spec supersedes the review-gate paragraph.
+
 - [x] **Session preview, delivered and validated 2026-09-08.** Deployed at
   `screencast.alfares.cz` (image `e1c3540`), 293 tests across 34 suites.
   A three-source session rendered end to end: all three audio proxies plus a

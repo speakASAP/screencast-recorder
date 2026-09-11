@@ -48,7 +48,10 @@ The implementation should use an S3-compatible SDK. Required operations are:
 - HeadObject;
 - ListBucket within the service prefix when needed;
 - GetObject for review/verification;
-- DeleteObject only under an explicit future retention operation.
+- DeleteObject under an explicit retention operation. In phase 1 there is
+  exactly one: Discard, which removes the objects continuous upload wrote for a
+  session the operator rejected. It is performed by the agent, scoped to that
+  session's prefix, and never touches local media.
 
 ### Object layout
 

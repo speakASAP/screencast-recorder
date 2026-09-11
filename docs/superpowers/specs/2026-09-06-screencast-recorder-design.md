@@ -107,6 +107,12 @@ plus terminal `discarded` and `failed`.
 `review` is the save/discard gate: recording has stopped, files are still local,
 and nothing reaches S3 until the operator decides.
 
+> **Superseded 2026-09-11** by
+> [`2026-09-11-continuous-upload-and-capture-alarms-design.md`](2026-09-11-continuous-upload-and-capture-alarms-design.md):
+> bytes now reach S3 during recording, so a crash loses seconds rather than
+> hours. The gate still exists and still requires an operator decision — what it
+> gates is publication (`session.stored`), not the movement of bytes.
+
 `retention_policy` defaults to `retain-until-published`. Phase 1 contains no
 process that deletes raw footage.
 

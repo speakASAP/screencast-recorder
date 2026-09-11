@@ -80,6 +80,11 @@ review → discarded
 The capture agent keeps local media authoritative through temporary controller
 failure.
 
+Per-track upload begins during `recording`: the agent uploads each 60-second
+segment as soon as a successor file proves it closed, and tracks that progress
+in `tracks.upload_state`. The session states above are unchanged, and `stored`
+still requires the operator's Save and the API's independent verification.
+
 ## Data model
 
 ### agents
