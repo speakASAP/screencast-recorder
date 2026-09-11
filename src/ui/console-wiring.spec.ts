@@ -155,3 +155,51 @@ describe('a session stuck in preparing can be abandoned', () => {
     expect(app).toContain("$('stop').hidden = stuck");
   });
 });
+
+describe('a session resumed while uploading shows what it is uploading', () => {
+  const fn = app.slice(app.indexOf('async function resumeActiveSession()'));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+
+  it('fills the review fields on the uploading branch, not only the review one', () => {
+    // Reloading during an upload routed straight to `show('review')` without
+    // ever calling enterReview, so Title, Duration, Tracks and Total size kept
+    // the em-dash defaults from the markup. The screen reported a live upload
+    // of a session it could not name.
+    const uploading = body.slice(body.indexOf("session.state === 'uploading'"));
+    expect(uploading).toContain('enterReview(');
+  });
+});
+
+describe('the upload poll can end without the session reaching a terminal state', () => {
+  const fn = app.slice(app.indexOf('function followUpload()'));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+
+  it('stops polling when progress stops advancing', () => {
+    // The poll cleared its interval only on `stored` or `failed`. A save whose
+    // upload-complete call never landed leaves the session in `uploading` for
+    // ever, and the console polled every two seconds against a state nothing
+    // would advance -- "0 of 5 tracks verified", indefinitely.
+    expect(body).toContain('stallMs');
+    expect(body).toMatch(/clearInterval\(state\.uploadTimer\)/);
+  });
+
+  it('says the upload has stalled rather than continuing to claim progress', () => {
+    expect(body).toMatch(/stalled/i);
+  });
+
+  it('treats an unexpected state as terminal instead of polling on', () => {
+    // `discarded` is reachable from `uploading` and is not `stored` or
+    // `failed`; without this the poll outlives the session.
+    expect(body).toContain("session.state !== 'uploading'");
+  });
+});
+
+describe('the review lede reflects what has actually been uploaded', () => {
+  it('is addressable, so it cannot keep claiming nothing was uploaded', () => {
+    // Hardcoded as "Recording finished. Nothing has been uploaded yet." it sat
+    // directly above a running progress bar. Continuous upload makes it wrong
+    // from the moment recording starts.
+    expect(html).toContain('id="review-lede"');
+    expect(app).toContain("$('review-lede')");
+  });
+});

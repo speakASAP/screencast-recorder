@@ -354,6 +354,15 @@ function enterReview(session) {
   document.querySelector('[data-screen="review"]').hidden = false;
   show('review');
 
+  // Hardcoded, this read "Recording finished. Nothing has been uploaded yet."
+  // while sitting directly above a running progress bar.
+  $('review-lede').textContent =
+    session.state === 'review'
+      ? 'Recording finished. Nothing has been uploaded yet.'
+      : session.state === 'stored'
+        ? 'Stored and verified in S3.'
+        : `Session is ${session.state}.`;
+
   $('rev-title').textContent = session.title;
   $('rev-duration').textContent = session.endedAt
     ? hhmmss(new Date(session.endedAt) - new Date(session.startedAt))
@@ -401,6 +410,14 @@ async function saveSession() {
 function followUpload() {
   clearInterval(state.uploadTimer);
 
+  // A save whose upload-complete call never lands leaves the session in
+  // `uploading` with nothing to advance it. Polling on regardless is what
+  // produced a console that read "0 of 5 tracks verified" indefinitely, so
+  // give up saying so rather than claiming progress that is not happening.
+  const stallMs = 60_000;
+  let lastDone = -1;
+  let lastChange = Date.now();
+
   state.uploadTimer = setInterval(async () => {
     let session;
     try {
@@ -419,6 +436,20 @@ function followUpload() {
     $('upload-count').textContent = `${done} of ${total} tracks verified`;
     renderTracks(session);
 
+    if (done !== lastDone) {
+      lastDone = done;
+      lastChange = Date.now();
+    }
+
+    if (session.state === 'uploading' && Date.now() - lastChange > stallMs) {
+      clearInterval(state.uploadTimer);
+      $('upload-note').textContent =
+        `Upload stalled at ${done} of ${total} tracks. The local files are untouched; ` +
+        'check the agent, then save again.';
+      $('save').disabled = false;
+      return;
+    }
+
     if (session.state === 'stored') {
       clearInterval(state.uploadTimer);
       $('upload-bar').style.width = '100%';
@@ -434,6 +465,11 @@ function followUpload() {
       $('upload-note').textContent =
         `Upload failed: ${session.failureReason || 'unknown reason'}. Local files are untouched.`;
       $('save').disabled = false;
+    } else if (session.state !== 'uploading') {
+      // `discarded` is reachable from `uploading` and is neither stored nor
+      // failed. Without this the poll outlives the session it is watching.
+      clearInterval(state.uploadTimer);
+      $('upload-note').textContent = `Session is ${session.state}; the upload is no longer running.`;
     }
   }, 2000);
 }
@@ -1104,7 +1140,10 @@ async function resumeActiveSession() {
     enterReview(await api(`/api/sessions/${session.id}`));
   } else if (session.state === 'uploading') {
     document.querySelector('[data-screen="review"]').hidden = false;
-    show('review');
+    // enterReview fills Title, Duration, Tracks and Total size. Without it the
+    // screen announced an upload of a session it could not name: every field
+    // kept the em-dash default from the markup.
+    enterReview(await api(`/api/sessions/${session.id}`));
     $('save').disabled = true;
     $('discard').disabled = true;
     $('upload-progress').hidden = false;
