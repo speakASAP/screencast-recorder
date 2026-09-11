@@ -208,3 +208,49 @@ describe('progress reporting for the console', () => {
     expect(written).not.toContain('secret-project');
   });
 });
+
+describe('the S3 prefix is fixed when recording starts', () => {
+  it('persists the prefix at start, not at save', async () => {
+    // A session that starts before midnight and saves after it would otherwise
+    // be verified against a prefix nothing was ever written to.
+    const { service, session } = makeService({ agents: ['a1'], state: SessionState.Preparing });
+    (session as Record<string, unknown>).startedAt = new Date('2026-09-10T22:30:00Z');
+
+    await service.reportStatus('s1', {
+      agent_id: 'a1',
+      state: 'ready',
+      clock: { synchronised: true, offset_ms: 0 },
+    } as never);
+
+    expect(session.s3Prefix).toBe('sessions/2026/09/10/s1');
+  });
+
+  it('carries the prefix in the start command, so the agent uploads to it', async () => {
+    const { service, session, commands } = makeService({
+      agents: ['a1'],
+      state: SessionState.Preparing,
+    });
+    (session as Record<string, unknown>).startedAt = new Date('2026-09-10T22:30:00Z');
+
+    await service.reportStatus('s1', {
+      agent_id: 'a1',
+      state: 'ready',
+      clock: { synchronised: true, offset_ms: 0 },
+    } as never);
+
+    const start = commands.find((c) => c.type === 'start');
+    expect((start?.payload as Record<string, unknown>)?.prefix).toBe('sessions/2026/09/10/s1');
+  });
+
+  it('save reuses the prefix rather than recomputing it', async () => {
+    // Recomputing at save is the midnight bug. Reuse is what makes the bytes
+    // already uploaded during recording verifiable.
+    const { service, session } = makeService({ agents: ['a1'], state: SessionState.Review });
+    session.s3Prefix = 'sessions/2026/09/10/s1';
+    (session as Record<string, unknown>).startedAt = new Date('2026-09-11T00:30:00Z');
+
+    await service.save('s1');
+
+    expect(session.s3Prefix).toBe('sessions/2026/09/10/s1');
+  });
+});

@@ -142,8 +142,15 @@ export class SessionsService {
     if (!allReady) return { accepted: true };
 
     const t0 = new Date(Date.now() + START_BARRIER_LEAD_SECONDS * 1000);
+    // Fixed here rather than at Save, and from the session's own startedAt if
+    // it already carries one (set by whatever scheduled this recording) rather
+    // than the barrier's t0. A session that starts before midnight and saves
+    // after it would otherwise be verified against a prefix nothing was
+    // uploaded to. Continuous upload also needs it now: the agent starts
+    // writing objects during recording, before Save is ever pressed.
+    session.s3Prefix = this.prefixFor(session);
     session.t0 = t0;
-    session.startedAt = t0;
+    session.startedAt = session.startedAt ?? t0;
     // The largest skew across agents is the editor's alignment tolerance.
     session.clockOffsetMs = Math.max(
       ...[...ready.values()].map((r) => Math.abs(r.clock?.offset_ms ?? 0)),
@@ -153,7 +160,10 @@ export class SessionsService {
     await this.sessions.save(session);
 
     for (const agentId of participants) {
-      await this.commands.queue(agentId, CommandType.Start, sessionId, { t0: t0.toISOString() });
+      await this.commands.queue(agentId, CommandType.Start, sessionId, {
+        t0: t0.toISOString(),
+        prefix: session.s3Prefix,
+      });
     }
 
     this.readiness.delete(sessionId);
@@ -197,10 +207,10 @@ export class SessionsService {
     const session = await this.require(sessionId);
     await this.transition(session, SessionState.Uploading);
 
-    // Fix the prefix now and persist it. Deriving it again at verification time
-    // would recompute the date, and a session that starts before midnight and
-    // saves after it would be verified against a prefix nothing was uploaded to.
-    const prefix = this.prefixFor(session);
+    // Already fixed at start. Recomputing here is the midnight bug, and would
+    // also orphan every object uploaded during recording. The fallback covers
+    // an older session recorded before this change, whose prefix was never set.
+    const prefix = session.s3Prefix ?? this.prefixFor(session);
     session.s3Prefix = prefix;
     await this.sessions.save(session);
 
