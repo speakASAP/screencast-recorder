@@ -147,6 +147,10 @@ Affected, and handled explicitly:
       tuned against a real microphone that produced the incident motivating
       this work.
 
+### Note on health-tier classification and the `quietBytesPerTick` threshold
+
+The health tracker classifies a track as `stalled` when its byte delta between ticks is zero or negative, and as `quiet` when an audio track's delta is positive but below `quietBytesPerTick`. The 2026-09-10 incident — one microphone writing 914 KB over 21 minutes while its sibling wrote 31 MB — produced a non-zero delta on every tick, so it surfaces as a soft `quiet` warning rather than a hard `stalled` alarm. The `quietBytesPerTick` threshold defaults to `2_000` bytes per tick and is deliberately left untuned because the boundary between a muted device and a quiet room cannot be determined without real audio samples. Until it is tuned, the motivating failure produces an advisory alert rather than a hard alarm. This threshold must be calibrated in the field against actual audio before it bears weight as a blocking signal.
+
 ## Required context
 
 - `../../BUSINESS.md`

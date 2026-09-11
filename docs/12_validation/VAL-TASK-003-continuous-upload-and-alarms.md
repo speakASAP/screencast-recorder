@@ -39,6 +39,18 @@ Pending. Each criterion below must be validated in the field before closure:
 | Alarm visibility in browser | Pending | View the alarm banner in a real browser (text harness cannot see off-screen or white-on-white content). |
 | `quietBytesPerTick` tuning | Pending | Tune the threshold in `agent/src/capture/health.ts` against a real microphone matching the 2026-09-10 incident profile. |
 
+### Why `quietBytesPerTick` is not yet tuned
+
+The `HealthTracker` class in `agent/src/capture/health.ts` classifies a track as:
+
+- **`stalled`** when its byte delta between ticks is **zero or negative** (no data moving);
+- **`quiet`** when an audio track's delta is **positive but below `quietBytesPerTick`** (data moves, but slowly);
+- **`ok`** for everything else.
+
+The 2026-09-10 incident that motivated this work involved one microphone writing 914 KB over 21 minutes while its sibling wrote 31 MB — a vast disparity. However, the affected microphone *did* write bytes on every tick: it produced a **non-zero delta**, not zero. This means it lands in the **`quiet` tier (advisory, base styling)** rather than **`stalled` (blocking, `--danger` styling)**.
+
+Until `quietBytesPerTick` is tuned against real audio, a near-silent microphone surfaces as a soft warning rather than a hard alarm. The threshold defaults to a deliberately generous `2_000` bytes per tick because the floor separating a muted device from a quiet room is not known yet and cannot be determined without field testing. This explanation exists in the design spec (`docs/superpowers/specs/2026-09-11-continuous-upload-and-capture-alarms-design.md`) and is restated here so a reader consulting this validation record alone understands why the motivating failure currently triggers an advisory alert, not an alarm.
+
 ## Gate evidence
 
 | Gate | Command | Result | Status |
