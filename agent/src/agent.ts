@@ -74,6 +74,13 @@ export interface AgentDeps {
    * working with in-memory-only queueing.
    */
   pendingStore?: { save(reports: PendingReport[]): Promise<void> };
+  /**
+   * Durable backing for the applied-command set, so a command already applied
+   * is still recognised as a duplicate after a restart. Optional for the same
+   * reason as `pendingStore`: callers and tests without one keep working, with
+   * deduplication holding only within the process.
+   */
+  appliedStore?: { save(ids: string[]): Promise<void> };
 }
 
 export interface AgentConfig {
@@ -123,8 +130,13 @@ export class Agent {
     // durable store at startup. Optional so every existing call site -- and
     // every test that constructs an `Agent` directly -- keeps compiling.
     initialPending: PendingReport[] = [],
+    // command_ids applied by a prior process, read from the durable store at
+    // startup. Without these a redelivered command looks new to a restarted
+    // agent, which is the one case redelivery exists to handle.
+    initialApplied: string[] = [],
   ) {
     this.pending = [...initialPending];
+    for (const id of initialApplied) this.applied.add(id);
   }
 
   /** Persists the queue after it changes. Never awaited by a caller that must
@@ -140,12 +152,32 @@ export class Agent {
       // Said out loud: a duplicate and a command that never arrived look
       // identical in a silent log, and they need opposite responses.
       log(`ignored ${command.type} ${command.command_id}: already applied`);
+      // Acknowledged anyway. The duplicate exists because the first delivery
+      // was never acknowledged, and leaving it unacknowledged means being
+      // handed it again on the next lease expiry until it hits the cap and
+      // fails a session that is in fact fine.
+      await this.acknowledge(command.command_id);
       return;
     }
-    this.applied.add(command.command_id);
 
     log(`handling ${command.type} for session ${command.session_id}`);
 
+    await this.dispatch(command);
+
+    // Marked applied only once the handler has run, not on receipt: an agent
+    // that dies mid-handling has not applied anything, and the API's
+    // redelivery is its only chance to have the command carried out. Marking
+    // on receipt would make the restarted agent refuse the retry as a
+    // duplicate and strand the session exactly as before.
+    this.applied.add(command.command_id);
+    void this.deps.appliedStore?.save([...this.applied]);
+
+    // Last, so a crash anywhere above leaves the command unacknowledged and
+    // therefore eligible for redelivery.
+    await this.acknowledge(command.command_id);
+  }
+
+  private async dispatch(command: Command): Promise<void> {
     switch (command.type) {
       case 'prepare':
         return this.prepare(command);
@@ -163,6 +195,25 @@ export class Agent {
         return this.pullerControl(command);
       default:
         return undefined;
+    }
+  }
+
+  /**
+   * Tells the API the command was applied, retiring it from the queue.
+   *
+   * Failure here is survivable and must not propagate: the work is already
+   * done, and an unacknowledged command is redelivered and then refused as a
+   * duplicate. Letting this throw would instead abort the poll loop iteration
+   * after a completed action.
+   */
+  private async acknowledge(commandId: string): Promise<void> {
+    try {
+      await this.deps.api.post(
+        `/api/agents/${this.config.agentId}/commands/${commandId}/ack`,
+        {},
+      );
+    } catch (error) {
+      log(`ack failed for ${commandId}: ${String(error)}`);
     }
   }
 

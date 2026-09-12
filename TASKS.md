@@ -29,12 +29,8 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   approval for raw deletion).
 - [ ] Webcam capture, once a camera is attached to a recording host.
 - [ ] MacBook agent: a second registration and a capture-module swap, no API
-  change.
-- [ ] Command acknowledgement. `nextFor` marks a command delivered on handout,
-  so an agent that dies between receiving and acting never sees it again.
-  Acceptable for one operator who can re-issue from the console; it needs
-  fixing before a second machine joins.
-
+  change. The command-acknowledgement gap that blocked a second machine is
+  fixed; it still wants the live restart check named in Completed.
 ## Blocked
 
 - None. The owner approved `BUSINESS.md`,
@@ -42,6 +38,31 @@ Foundation plan: [`docs/superpowers/plans/2026-09-06-screencast-recorder-foundat
   2026-09-06; the IPS planning gate and the pre-coding gate both pass.
 
 ## Completed
+
+- [x] **Command acknowledgement, implemented 2026-09-12. Not yet exercised on a
+  live session.** `nextFor` used to set `deliveredAt` on handout and also read
+  it as the done marker, so an agent that died between receiving a command and
+  acting on it never saw that command again: a pending `stop` was dropped and
+  its session sat in `stopping` for ever. Delivery is now a 30-second lease and
+  a new `POST /api/agents/{id}/commands/{cid}/ack` is what retires a command;
+  the agent acknowledges after applying, so a crash mid-handling keeps the
+  command eligible. Redelivery is only safe because the agent's applied-set is
+  now durable (`agent/src/applied-store.ts`): the restart that causes the
+  redelivery is the event that used to empty the in-memory one, so without it a
+  redelivered `start` would spawn a second ffmpeg tree into one directory.
+  Bounded at 3 deliveries, after which the session is failed with
+  `command_unacknowledged` rather than looping silently. 525 tests across 48
+  suites, all passing; `commands.service.ts` had no spec at all before this and
+  now has 12. Migration `1757200700000-CommandAcknowledgement` is additive and
+  treats every pre-existing command as acknowledged — all 64 rows in the live
+  database are already delivered, so nothing is stranded, and the alternative
+  would redeliver the entire history on the agent's next poll. The old index
+  name was read from the live database, not assumed.
+
+  Outstanding: a live run confirming a stop survives `systemctl --user restart
+  screencast-agent` mid-handling, which is the behaviour the change exists for
+  and the one thing no test here proves. Evidence:
+  [`docs/12_validation/VAL-TASK-004-command-acknowledgement.md`](docs/12_validation/VAL-TASK-004-command-acknowledgement.md).
 
 - [x] **Continuous upload and capture-health alarms, 11 implementation commits
   delivered and validated 2026-09-11.** Deployed at `screencast.alfares.cz`

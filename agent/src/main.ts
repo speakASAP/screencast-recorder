@@ -34,6 +34,7 @@ import { join } from 'node:path';
 import { ContinuousUploader } from './upload/continuous';
 import { purgePrefix } from './upload/purge';
 import { HealthTracker } from './capture/health';
+import { AppliedStore } from './applied-store';
 import { PendingStore } from './pending-store';
 
 /**
@@ -111,6 +112,16 @@ async function main(): Promise<void> {
     write: (contents) => writeFile(join(config.recordingDir, '.pending-reports.json'), contents),
   });
   const initialPending = await pendingStore.load();
+
+  // Outside any session directory for the same reason as the pending queue,
+  // and for one more: an id must still be recognised as applied after the
+  // session it belonged to has been discarded.
+  const appliedStore = new AppliedStore({
+    read: () =>
+      readFile(join(config.recordingDir, '.applied-commands.json'), 'utf8').catch(() => null),
+    write: (contents) => writeFile(join(config.recordingDir, '.applied-commands.json'), contents),
+  });
+  const initialApplied = await appliedStore.load();
 
   const agent = new Agent(
     {
@@ -367,9 +378,11 @@ async function main(): Promise<void> {
         api.setBearer(credentials.agentBearer);
       },
       pendingStore: { save: (reports) => pendingStore.save(reports) },
+      appliedStore: { save: (ids) => appliedStore.save(ids) },
     },
     { agentId, minFreeGb: config.minFreeGb },
     initialPending,
+    initialApplied,
   );
 
   // Two independent loops. Polling must not be delayed by a slow progress

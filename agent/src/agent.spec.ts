@@ -106,6 +106,94 @@ describe('command idempotency', () => {
     // same directory.
     expect(deps.captureStarts).toBe(1);
   });
+
+  it('still refuses a redelivered command after a restart', async () => {
+    // The in-memory set alone was sound only while the API retired a command
+    // on handout. Now that an unacknowledged command is offered again, the
+    // restart that causes the redelivery is the very event that used to empty
+    // the set -- so the ids have to come back from disk.
+    const first = makeDeps();
+    const saved: string[][] = [];
+    first.appliedStore = { save: jest.fn(async (ids: string[]) => void saved.push(ids)) };
+    const before = new Agent(first, { agentId: 'a', minFreeGb: 20 });
+
+    await before.handle({
+      command_id: 'p1', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
+    const command = { command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() } };
+    await before.handle(command as never);
+
+    const after = makeDeps();
+    const restarted = new Agent(after, { agentId: 'a', minFreeGb: 20 }, [], saved.at(-1));
+    await restarted.handle(command as never);
+
+    expect(after.captureStarts).toBe(0);
+  });
+
+  it('acknowledges a command only after applying it', async () => {
+    // Acknowledgement is what retires the command from the queue, so it must
+    // come after the work: an agent that dies mid-handling has to be handed
+    // the command again.
+    const order: string[] = [];
+    const deps = makeDeps({}, { start: jest.fn(async () => void order.push('start')) });
+    (deps.api.post as jest.Mock).mockImplementation(async (path: string) => {
+      // Only this command's ack; the preceding prepare acks too.
+      if (path.endsWith('/commands/c1/ack')) order.push('ack');
+      return null;
+    });
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await agent.handle({
+      command_id: 'p1', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    } as never);
+    await agent.handle({
+      command_id: 'c1', type: 'start', session_id: 's', payload: { t0: future() },
+    } as never);
+
+    expect(order).toEqual(['start', 'ack']);
+  });
+
+  it('acknowledges a duplicate as well, so it is not redelivered for ever', async () => {
+    // A duplicate arrives because the first delivery was never acknowledged.
+    // Ignoring it silently leaves it unacknowledged, so it returns on every
+    // lease expiry until the cap fails a session that is actually fine.
+    const deps = makeDeps();
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+    const command = {
+      command_id: 'p1', type: 'prepare', session_id: 's',
+      payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+    };
+
+    await agent.handle(command as never);
+    (deps.api.post as jest.Mock).mockClear();
+    await agent.handle(command as never);
+
+    const acks = (deps.api.post as jest.Mock).mock.calls.filter(([path]: [string]) =>
+      path.endsWith('/commands/p1/ack'),
+    );
+    expect(acks).toHaveLength(1);
+  });
+
+  it('does not fail the command when the acknowledgement cannot be delivered', async () => {
+    // The work is already done. A throw here would abort the poll loop
+    // iteration after a completed action, and the redelivered command is
+    // refused as a duplicate anyway.
+    const deps = makeDeps();
+    (deps.api.post as jest.Mock).mockImplementation(async (path: string) => {
+      if (path.endsWith('/ack')) throw new Error('ECONNREFUSED');
+      return null;
+    });
+    const agent = new Agent(deps, { agentId: 'a', minFreeGb: 20 });
+
+    await expect(
+      agent.handle({
+        command_id: 'p1', type: 'prepare', session_id: 's',
+        payload: { tracks: [{ track_id: 't1', kind: 'screen', source_ref: 'HDMI-A-0' }] },
+      } as never),
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('resilience to a controller outage', () => {
@@ -374,7 +462,11 @@ describe('render-preview', () => {
       'sessions/2026/09/07/s1',
       ['jabra', 'usb1', 'usb2'],
     );
-    const posted = (deps.api.post as jest.Mock).mock.calls.at(-1)![1] as any;
+    // Selected by path rather than taken as the last call: the agent posts an
+    // acknowledgement after every command, so the last call is the ack.
+    const posted = (deps.api.post as jest.Mock).mock.calls.find(([path]: [string]) =>
+      path.includes('/preview'),
+    )![1] as any;
     expect(posted.artifacts.filter((a: { kind: string }) => a.kind === 'audio')).toHaveLength(3);
   });
 

@@ -103,8 +103,41 @@ agent reconnects immediately after any response.
 ```
 
 **Idempotency.** Commands are at-least-once. The agent records every applied
-`command_id` and ignores a repeat. A redelivered `start` after `T0` has passed
+`command_id` **durably**, so a repeat is recognised across a restart as well as
+within one process, and ignores it. A redelivered `start` after `T0` has passed
 must not spawn a second capture.
+
+**Delivery and acknowledgement.** Handing a command out does not retire it.
+A command is offered again if it is not acknowledged within a **30-second
+lease**, so an agent that dies between receiving a command and acting on it is
+handed that command again when it comes back rather than losing it: before
+this, a pending `stop` was silently dropped and its session sat in `stopping`
+for ever.
+
+The lease is just over the 25-second poll window, so an agent that receives and
+applies a command always acknowledges inside it. A long-running command
+(`render-preview`, `upload`) can outlast the lease and be redelivered while it
+is still working; the agent's durable applied-set absorbs that as a duplicate.
+
+After **3 deliveries** without an acknowledgement the command is abandoned: its
+session is failed with `command_unacknowledged` if it is still in a state that
+can legally fail, and otherwise the command is simply retired. Without the cap,
+a command that kills the agent on arrival is a silent restart loop — crash,
+restart, poll, crash.
+
+### `POST /api/agents/{agent_id}/commands/{command_id}/ack`
+
+The agent confirming it applied a command. Sent **after** the work, so a crash
+mid-handling leaves the command eligible for redelivery. Acknowledging is
+idempotent, and scoped to the agent in the path: an ack cannot retire another
+machine's command. A duplicate is acknowledged too — it exists precisely
+because the first delivery was not, and leaving it unacknowledged would walk it
+to the abandonment cap and fail a healthy session.
+
+```jsonc
+// 200
+{ "accepted": true }
+```
 
 #### `prepare` payload
 
@@ -158,7 +191,12 @@ the reason.
 
 Failure reasons are a closed set, so the UI can explain them:
 `clock_unsynchronised`, `source_missing`, `disk_below_threshold`,
-`encoder_unavailable`, `t0_missed`, `ffmpeg_failed`, `internal_error`.
+`encoder_unavailable`, `t0_missed`, `ffmpeg_failed`, `internal_error`,
+`command_unacknowledged`.
+
+`command_unacknowledged` is the one reason the API raises on its own behalf
+rather than relaying from an agent: it means a command reached the delivery cap
+without ever being acknowledged, so the session cannot be driven any further.
 
 ### `POST /api/sessions/{session_id}/progress`
 

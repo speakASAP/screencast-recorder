@@ -36,7 +36,9 @@ export enum CommandType {
  * durable record of what was already handed out.
  */
 @Entity('commands')
-@Index(['agentId', 'deliveredAt'])
+// The long-poll predicate: one agent's unacknowledged rows. Every poll runs it
+// twice a second, so it is the one query here worth an index.
+@Index(['agentId', 'acknowledgedAt'])
 export class Command {
   @PrimaryColumn({ type: 'uuid' })
   id: string = randomUUID();
@@ -53,8 +55,29 @@ export class Command {
   @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
   payload!: Record<string, unknown>;
 
+  /**
+   * When the command was last handed to the agent. Not a completion marker:
+   * an agent that died between receiving this and acting on it leaves the row
+   * delivered and unacknowledged, which is what makes it eligible for
+   * redelivery once the lease expires.
+   */
   @Column({ type: 'timestamptz', nullable: true })
   deliveredAt!: Date | null;
+
+  /**
+   * When the agent confirmed it applied the command. Only this retires a row
+   * from the queue.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  acknowledgedAt!: Date | null;
+
+  /**
+   * How many times this row has been handed out. Bounded redelivery: a command
+   * that kills the agent on arrival would otherwise loop -- crash, restart,
+   * poll, crash -- with nothing in the console to show it.
+   */
+  @Column({ type: 'int', default: 0 })
+  deliveryCount!: number;
 
   @CreateDateColumn({ type: 'timestamptz' })
   issuedAt!: Date;

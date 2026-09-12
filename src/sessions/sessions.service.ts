@@ -303,6 +303,20 @@ export class SessionsService {
     return `sessions/${yyyy}/${mm}/${dd}/${session.id}`;
   }
 
+  /**
+   * Whether this session is still in a state a failure can legally move it out
+   * of.
+   *
+   * Asks the transition table rather than listing states, so a change to the
+   * table cannot leave a stale copy of it here. A session that has vanished
+   * answers false: there is nothing left to fail.
+   */
+  async canFail(sessionId: string): Promise<boolean> {
+    const session = await this.sessions.findOne({ where: { id: sessionId } });
+    if (!session) return false;
+    return isLegalTransition(session.state, SessionState.Failed);
+  }
+
   private async require(sessionId: string): Promise<Session> {
     const session = await this.sessions.findOne({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Unknown session');

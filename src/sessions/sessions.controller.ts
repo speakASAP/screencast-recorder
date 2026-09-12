@@ -63,6 +63,29 @@ export class SessionsController {
     // The poll itself is the heartbeat: an idle agent may go hours without
     // enrolling or reporting capabilities, and it is still alive.
     await this.agents.touch(id);
+
+    // Checked on the way in, before waiting out a poll window: a command past
+    // the redelivery cap is one the agent could not survive, and its session
+    // must be failed rather than left in a phase it will never leave. The
+    // failure goes through reportStatus so it takes the same path, and lands in
+    // the same console field, as a failure the agent reported itself.
+    for (const dead of await this.commands.abandoned(id)) {
+      // Only a session that can still legally fail is failed. One already
+      // stored, discarded, failed or in review is finished with, and its
+      // abandoned command is merely stale -- pushing a failure at it would
+      // throw the transition guard's 400 out of this poll route and take the
+      // agent's heartbeat down with it. Retiring the command is the whole job
+      // in that case.
+      if (await this.sessions.canFail(dead.sessionId)) {
+        await this.sessions.reportStatus(dead.sessionId, {
+          agent_id: id,
+          state: 'failed',
+          reason: 'command_unacknowledged',
+        } as StatusDto);
+      }
+      await this.commands.retire(dead.commandId);
+    }
+
     const command = await this.commands.nextFor(id);
     if (!command) {
       res.status(204).send();
@@ -75,6 +98,23 @@ export class SessionsController {
       issued_at: command.issuedAt.toISOString(),
       payload: command.payload,
     });
+  }
+
+  /**
+   * The agent confirming it applied a command. Only this retires the command
+   * from the queue; without it the command is offered again once its lease
+   * expires, which is how a stop survives the agent dying mid-handling.
+   */
+  @Post('agents/:id/commands/:commandId/ack')
+  @AgentRoute()
+  @UseGuards(AgentRoleGuard)
+  @HttpCode(200)
+  async ack(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('commandId', ParseUUIDPipe) commandId: string,
+  ): Promise<{ accepted: true }> {
+    await this.commands.acknowledge(id, commandId);
+    return { accepted: true };
   }
 
   @Post('sessions/:id/status')
